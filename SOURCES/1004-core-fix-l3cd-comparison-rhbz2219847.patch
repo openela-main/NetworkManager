@@ -1,0 +1,88 @@
+From d6f13aefda85ea06985e7fe2f776abd8ee0406cf Mon Sep 17 00:00:00 2001
+From: Beniamino Galvani <bgalvani@redhat.com>
+Date: Fri, 24 Mar 2023 17:42:45 +0100
+Subject: [PATCH] core: fix l3cd comparison
+
+NM_CMP_SELF(a, b) returns immediately if the objects are the same.
+
+Fixes: cb29244552af ('core: support compare flags in nm_l3_config_data_cmp_full()')
+Fixes-test: @dracut_NM_iSCSI_ibft_table
+
+https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/merge_requests/1583
+(cherry picked from commit 0a02995175e06e62924705393121a1c5efc3822d)
+(cherry picked from commit 5d95c20787077a91d684259d67f2e0ff3a1d7a1a)
+---
+ src/core/nm-l3-config-data.c | 54 +++++++++++++++++++-----------------
+ 1 file changed, 28 insertions(+), 26 deletions(-)
+
+diff --git a/src/core/nm-l3-config-data.c b/src/core/nm-l3-config-data.c
+index 17bb9db87d..d5dedb9c8a 100644
+--- a/src/core/nm-l3-config-data.c
++++ b/src/core/nm-l3-config-data.c
+@@ -2297,35 +2297,37 @@ nm_l3_config_data_cmp_full(const NML3ConfigData *a,
+         const NMPObject *def_route_a = a->best_default_route_x[IS_IPv4];
+         const NMPObject *def_route_b = b->best_default_route_x[IS_IPv4];
+ 
+-        NM_CMP_SELF(def_route_a, def_route_b);
+-
+-        if (NM_FLAGS_HAS(flags, NM_L3_CONFIG_CMP_FLAGS_ROUTES)) {
+-            NM_CMP_RETURN(nmp_object_cmp_full(def_route_a,
+-                                              def_route_b,
+-                                              NM_FLAGS_HAS(flags, NM_L3_CONFIG_CMP_FLAGS_IFINDEX)
+-                                                  ? NMP_OBJECT_CMP_FLAGS_NONE
+-                                                  : NMP_OBJECT_CMP_FLAGS_IGNORE_IFINDEX));
+-        } else if (NM_FLAGS_HAS(flags, NM_L3_CONFIG_CMP_FLAGS_ROUTES_ID)) {
+-            if (NM_FLAGS_HAS(flags, NM_L3_CONFIG_CMP_FLAGS_IFINDEX)) {
+-                NM_CMP_DIRECT(def_route_a->obj_with_ifindex.ifindex,
+-                              def_route_b->obj_with_ifindex.ifindex);
+-            }
++        if (def_route_a != def_route_b) {
++            if (NM_FLAGS_HAS(flags, NM_L3_CONFIG_CMP_FLAGS_ROUTES)) {
++                NM_CMP_RETURN(
++                    nmp_object_cmp_full(def_route_a,
++                                        def_route_b,
++                                        NM_FLAGS_HAS(flags, NM_L3_CONFIG_CMP_FLAGS_IFINDEX)
++                                            ? NMP_OBJECT_CMP_FLAGS_NONE
++                                            : NMP_OBJECT_CMP_FLAGS_IGNORE_IFINDEX));
++            } else if (NM_FLAGS_HAS(flags, NM_L3_CONFIG_CMP_FLAGS_ROUTES_ID)) {
++                if (NM_FLAGS_HAS(flags, NM_L3_CONFIG_CMP_FLAGS_IFINDEX)) {
++                    NM_CMP_DIRECT(def_route_a->obj_with_ifindex.ifindex,
++                                  def_route_b->obj_with_ifindex.ifindex);
++                }
+ 
+-            if (IS_IPv4) {
+-                NMPlatformIP4Route ra = def_route_a->ip4_route;
+-                NMPlatformIP4Route rb = def_route_b->ip4_route;
++                if (IS_IPv4) {
++                    NMPlatformIP4Route ra = def_route_a->ip4_route;
++                    NMPlatformIP4Route rb = def_route_b->ip4_route;
+ 
+-                NM_CMP_DIRECT(ra.metric, rb.metric);
+-                NM_CMP_DIRECT(ra.plen, rb.plen);
+-                NM_CMP_RETURN_DIRECT(nm_ip4_addr_same_prefix_cmp(ra.network, rb.network, ra.plen));
+-            } else {
+-                NMPlatformIP6Route ra = def_route_a->ip6_route;
+-                NMPlatformIP6Route rb = def_route_b->ip6_route;
++                    NM_CMP_DIRECT(ra.metric, rb.metric);
++                    NM_CMP_DIRECT(ra.plen, rb.plen);
++                    NM_CMP_RETURN_DIRECT(
++                        nm_ip4_addr_same_prefix_cmp(ra.network, rb.network, ra.plen));
++                } else {
++                    NMPlatformIP6Route ra = def_route_a->ip6_route;
++                    NMPlatformIP6Route rb = def_route_b->ip6_route;
+ 
+-                NM_CMP_DIRECT(ra.metric, rb.metric);
+-                NM_CMP_DIRECT(ra.plen, rb.plen);
+-                NM_CMP_RETURN_DIRECT(
+-                    nm_ip6_addr_same_prefix_cmp(&ra.network, &rb.network, ra.plen));
++                    NM_CMP_DIRECT(ra.metric, rb.metric);
++                    NM_CMP_DIRECT(ra.plen, rb.plen);
++                    NM_CMP_RETURN_DIRECT(
++                        nm_ip6_addr_same_prefix_cmp(&ra.network, &rb.network, ra.plen));
++                }
+             }
+         }
+ 
+-- 
+2.38.1
+

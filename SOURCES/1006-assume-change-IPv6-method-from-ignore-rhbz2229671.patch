@@ -1,0 +1,42 @@
+From 72fc1ef4c365cfda7fc0a86afd3ce124d57e8d5c Mon Sep 17 00:00:00 2001
+From: Wen Liang <liangwen12year@gmail.com>
+Date: Mon, 17 Jul 2023 14:09:04 -0400
+Subject: [PATCH] assume: change IPv6 method from "ignore" and "disabled" into
+ "auto"
+
+IPv6 method "disabled" and "ignore" are not supported for loopback
+device, when generating the assume connection, the generated connection
+will fail verification. Therefore, change the IPv6 method into "auto",
+as a result, for loopback external connection, NM will not toggle the
+`disable_ipv6` sysctl setting when `systemd-sysctl` sets it into 1.
+
+https://bugzilla.redhat.com/show_bug.cgi?id=2207878
+
+https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/merge_requests/1694
+(cherry picked from commit e8a2306afbcd3e328f62004af92cd21b2477f0ac)
+(cherry picked from commit 832e8df0c17f44be2c62485c19a0b20f6d3efa07)
+---
+ src/core/NetworkManagerUtils.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/src/core/NetworkManagerUtils.c b/src/core/NetworkManagerUtils.c
+index 6f4c60f876..84ee6c3a0d 100644
+--- a/src/core/NetworkManagerUtils.c
++++ b/src/core/NetworkManagerUtils.c
+@@ -1748,6 +1748,13 @@ nm_utils_platform_capture_ip_setting(NMPlatform *platform,
+             method = maybe_ipv6_disabled ? NM_SETTING_IP6_CONFIG_METHOD_DISABLED
+                                          : NM_SETTING_IP6_CONFIG_METHOD_IGNORE;
+     }
++
++    /* The IPv6 method "ignore" and "disabled" are not supported for loopback */
++    if (ifindex == 1
++        && NM_IN_STRSET(method,
++                        NM_SETTING_IP6_CONFIG_METHOD_DISABLED,
++                        NM_SETTING_IP6_CONFIG_METHOD_IGNORE))
++        method = NM_SETTING_IP6_CONFIG_METHOD_AUTO;
+     g_object_set(s_ip, NM_SETTING_IP_CONFIG_METHOD, method, NULL);
+ 
+     nmp_lookup_init_object_by_ifindex(&lookup, NMP_OBJECT_TYPE_IP_ROUTE(IS_IPv4), ifindex);
+-- 
+2.41.0
+
