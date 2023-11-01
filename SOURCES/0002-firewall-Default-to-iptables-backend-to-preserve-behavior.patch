@@ -1,0 +1,34 @@
+From af25d85a43eb2aa59a80c13aa214cbc5509b6815 Mon Sep 17 00:00:00 2001
+From: Wen Liang <wenliang@redhat.com>
+Date: Wed, 16 Jun 2021 22:43:32 +0200
+Subject: [PATCH] firewall: Default to iptables backend to preserve behavior
+
+For upsteam, the default is "nftables" (if nft is installed). On RHEL8, we will
+always default to "iptables" to preserve behavior.
+---
+ src/core/nm-firewall-utils.c | 9 +++------
+ 1 file changed, 3 insertions(+), 6 deletions(-)
+
+diff --git a/src/core/nm-firewall-utils.c b/src/core/nm-firewall-utils.c
+index 1311f5039910..3284b5ebaa4b 100644
+--- a/src/core/nm-firewall-utils.c
++++ b/src/core/nm-firewall-utils.c
+@@ -743,12 +743,9 @@ nm_firewall_config_apply(NMFirewallConfig *self, gboolean shared)
+ static NMFirewallBackend
+ _firewall_backend_detect(void)
+ {
+-    if (g_file_test(NFT_PATH, G_FILE_TEST_IS_EXECUTABLE))
+-        return NM_FIREWALL_BACKEND_NFTABLES;
+-    if (g_file_test(IPTABLES_PATH, G_FILE_TEST_IS_EXECUTABLE))
+-        return NM_FIREWALL_BACKEND_IPTABLES;
+-
+-    return NM_FIREWALL_BACKEND_NFTABLES;
++    /* For upsteam, the default is "nftables" (if nft is installed). On RHEL8, we will
++     * always default to "iptables" to preserve behavior. */
++    return NM_FIREWALL_BACKEND_IPTABLES;
+ }
+ 
+ NMFirewallBackend
+-- 
+2.31.1
+
