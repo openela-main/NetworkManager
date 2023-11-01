@@ -81,9 +81,9 @@
 %bcond_with connectivity_fedora
 %endif
 %if 0%{?rhel} && 0%{?rhel} >= 8
-%bcond_without connectivity_redhat
+%bcond_without connectivity_openela
 %else
-%bcond_with connectivity_redhat
+%bcond_with connectivity_openela
 %endif
 %if 0%{?fedora} >= 29 || 0%{?rhel} >= 8
 %bcond_without crypto_gnutls
@@ -183,7 +183,7 @@ Name: NetworkManager
 Summary: Network connection manager and user applications
 Epoch: %{epoch_version}
 Version: %{rpm_version}
-Release: %{release_version}%{?snap}%{?dist}
+Release: %{release_version}%{?snap}.0.1%{?dist}
 Group: System Environment/Base
 License: GPLv2+ and LGPLv2+
 URL: https://networkmanager.dev/
@@ -192,7 +192,7 @@ Source: https://download.gnome.org/sources/NetworkManager/%{real_version_major}/
 Source1: NetworkManager.conf
 Source2: 00-server.conf
 Source4: 20-connectivity-fedora.conf
-Source5: 20-connectivity-redhat.conf
+Source5: 20-connectivity-openela.conf
 Source6: 70-nm-connectivity.conf
 Source7: readme-ifcfg-rh.txt
 
@@ -517,16 +517,16 @@ via Fedora infrastructure.
 %endif
 
 
-%if %{with connectivity_redhat}
-%package config-connectivity-redhat
-Summary: NetworkManager config file for connectivity checking via Red Hat servers
+%if %{with connectivity_openela}
+%package config-connectivity-openela
+Summary: NetworkManager config file for connectivity checking via OpenELA servers
 Group: System Environment/Base
 BuildArch: noarch
 Provides: NetworkManager-config-connectivity = %{epoch}:%{version}-%{release}
 
-%description config-connectivity-redhat
+%description config-connectivity-openela
 This adds a NetworkManager configuration file to enable connectivity checking
-via Red Hat infrastructure.
+via OpenELA infrastructure.
 %endif
 
 
@@ -916,7 +916,7 @@ cp %{SOURCE2} %{buildroot}%{nmlibdir}/conf.d/
 cp %{SOURCE4} %{buildroot}%{nmlibdir}/conf.d/
 %endif
 
-%if %{with connectivity_redhat}
+%if %{with connectivity_openela}
 cp %{SOURCE5} %{buildroot}%{nmlibdir}/conf.d/
 mkdir -p %{buildroot}%{_sysctldir}
 cp %{SOURCE6} %{buildroot}%{_sysctldir}
@@ -1201,11 +1201,11 @@ fi
 %endif
 
 
-%if %{with connectivity_redhat}
-%files config-connectivity-redhat
+%if %{with connectivity_openela}
+%files config-connectivity-openela
 %dir %{nmlibdir}
 %dir %{nmlibdir}/conf.d
-%{nmlibdir}/conf.d/20-connectivity-redhat.conf
+%{nmlibdir}/conf.d/20-connectivity-openela.conf
 %{_sysctldir}/70-nm-connectivity.conf
 %endif
 
@@ -1258,6 +1258,9 @@ fi
 
 
 %changelog
+* Wed Nov 01 2023 Alex Burmashev <alexander.burmashev@oracle.com> - 1:1.42.2-8.0.1
+- Replace connectivity-redhat sub-package with connectivity-openela
+
 * Wed Aug 16 2023 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.42.2-8
 - settings: preserve existing connection flags on update (rh #2229671)
 
