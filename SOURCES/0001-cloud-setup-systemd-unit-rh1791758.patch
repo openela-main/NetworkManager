@@ -1,0 +1,37 @@
+From 45f33b5379c41f34fb1a27452e5f62e2d571e85e Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Thu, 16 Jan 2020 13:40:26 +0100
+Subject: [PATCH] cloud-setup: avoid unsupported systemd settings in
+ nm-cloud-setup.service init for rhel-8.2
+
+https://bugzilla.redhat.com/show_bug.cgi?id=1791758
+---
+ src/nm-cloud-setup/nm-cloud-setup.service.in | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/nm-cloud-setup/nm-cloud-setup.service.in b/src/nm-cloud-setup/nm-cloud-setup.service.in
+index f4b0e2638f14..c59bd47574ba 100644
+--- a/src/nm-cloud-setup/nm-cloud-setup.service.in
++++ b/src/nm-cloud-setup/nm-cloud-setup.service.in
+@@ -28,15 +28,15 @@ PrivateDevices=yes
+ PrivateTmp=yes
+ ProtectControlGroups=yes
+ ProtectHome=yes
+-ProtectHostname=yes
+-ProtectKernelLogs=yes
++#ProtectHostname=yes
++#ProtectKernelLogs=yes
+ ProtectKernelModules=yes
+ ProtectKernelTunables=yes
+ ProtectSystem=strict
+ RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
+ RestrictNamespaces=yes
+ RestrictRealtime=yes
+-RestrictSUIDSGID=yes
++#RestrictSUIDSGID=yes
+ SystemCallFilter=@system-service
+ 
+ [Install]
+-- 
+2.31.1
+

@@ -1,0 +1,1299 @@
+From 651cdebe373603ec14d7268452d6661acfdc413f Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Wed, 24 May 2023 09:44:59 +0200
+Subject: [PATCH 1/8] Revert "infiniband: avoid normalizing the p-key when
+ reading from ifcfg"
+
+Historically, initscripts' ifup-ib would set the highest bit of
+PKEY_ID=. That changed and needs to be restored.
+
+Note that it probably makes little sense to ever configure p-keys
+without the highest bit set, because that flag indicates full membership
+and kernel will automatically add it. At least, kernel will add the flag
+for the p-key, but not for the automatically chosen interface name.
+
+Meaning, writing 0x00f0 to create_child sysctl, results in an interface
+"$parent.00f0", but `ip -d link` shows pkey 0x80f0.
+
+As NetworkManager otherwise supports p-keys without the highest bit set,
+and since that high bit is honored for the interface name, we cannot
+just always add the high bit. NetworkManager always assuming the highest
+bit is set, would change the interface names of existing configuration.
+
+With this revert, when a user configures a small p-key and the profile
+is stored in ifcfg-rh format, the settings backend will automatically
+mangle the profile and set 0x8000. That is different from when the
+profile is stored in keyfile format. Since using small p-keys is
+probably an odd case, we don't try to workaround that any other way
+(like that ifcfg format could represent the orignal value of the profile
+and not doing such mangling, or to add the high bit throughout
+NetworkManager to the p-key). It's an inconsistency, but given the
+existing behaviors it seems best to stick (revert) to it.
+
+This reverts commit a4fe16a426097eee263cb3ef831dcea468b1ca26.
+
+Affected versions were 1.42.2+ and 1.40.2+.
+
+See-also: https://src.fedoraproject.org/rpms/rdma/blob/05333c3602aa3c1d82a6363521bdd5a498eac6d0/f/rdma.ifup-ib#_75
+
+https://bugzilla.redhat.com/show_bug.cgi?id=2209164
+(cherry picked from commit f8e5e07355e23b6d59b1b1c9cd2387c6b40b214b)
+(cherry picked from commit a1b73d823f5ec30c240418137d62d183b6ff8ca7)
+---
+ .../plugins/ifcfg-rh/nms-ifcfg-rh-reader.c    | 18 ++++++
+ .../plugins/ifcfg-rh/tests/test-ifcfg-rh.c    | 57 ++++++++++++++-----
+ 2 files changed, 60 insertions(+), 15 deletions(-)
+
+diff --git a/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-reader.c b/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-reader.c
+index 02ba84320134..533379c67868 100644
+--- a/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-reader.c
++++ b/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-reader.c
+@@ -5387,6 +5387,24 @@ parse_infiniband_p_key(shvarFile *ifcfg, int *out_p_key, char **out_parent, GErr
+         return FALSE;
+     }
+ 
++    /* The highest bit 0x8000 indicates full membership, which kernel always
++     * automatically sets.
++     *
++     * NetworkManager supports p-keys without the high bit set. That affects
++     * the interface name (nmp_utils_new_infiniband_name()) and is what
++     * we write to "create_child"/"delete_child" sysctl. Kernel will honor
++     * such p-keys for the interface name, but for other purposes it adds the
++     * highest bit. That makes using p-keys without the highest bit odd.
++     *
++     * Historically, /etc/sysconfig/network-scripts/ifup-ib would always add "|=0x8000".
++     * The reader does that too.
++     *
++     * Note that this means ifcfg cannot handle p-keys without the highest bit set,
++     * and when trying to store that to ifcfg format, the profile will be mangled/modified
++     * by the ifcg plugin (unlike keyfile backend, which preserves the original p-key value).
++     */
++    id |= 0x8000;
++
+     *out_p_key  = id;
+     *out_parent = g_steal_pointer(&physdev);
+     return TRUE;
+diff --git a/src/core/settings/plugins/ifcfg-rh/tests/test-ifcfg-rh.c b/src/core/settings/plugins/ifcfg-rh/tests/test-ifcfg-rh.c
+index d2ac2b29dbc8..01eb24216aec 100644
+--- a/src/core/settings/plugins/ifcfg-rh/tests/test-ifcfg-rh.c
++++ b/src/core/settings/plugins/ifcfg-rh/tests/test-ifcfg-rh.c
+@@ -8383,21 +8383,21 @@ test_read_ipoib(void)
+     s_infiniband = nmtst_connection_assert_setting(connection, NM_TYPE_SETTING_INFINIBAND);
+ 
+     pkey = nm_setting_infiniband_get_p_key(s_infiniband);
+-    g_assert(pkey);
+-    g_assert_cmpint(pkey, ==, 12);
++    g_assert_cmpint(pkey, ==, 0x800c);
+ 
+     transport_mode = nm_setting_infiniband_get_transport_mode(s_infiniband);
+-    g_assert(transport_mode);
+     g_assert_cmpstr(transport_mode, ==, "connected");
+ }
+ 
+ static void
+ test_write_infiniband(gconstpointer test_data)
+ {
+-    const int                     TEST_IDX   = GPOINTER_TO_INT(test_data);
+-    nmtst_auto_unlinkfile char   *testfile   = NULL;
+-    gs_unref_object NMConnection *connection = NULL;
+-    gs_unref_object NMConnection *reread     = NULL;
++    const int                     TEST_IDX    = GPOINTER_TO_INT(test_data);
++    nmtst_auto_unlinkfile char   *testfile    = NULL;
++    gs_unref_object NMConnection *connection  = NULL;
++    gs_unref_object NMConnection *expected    = NULL;
++    gs_unref_object NMConnection *reread      = NULL;
++    gboolean                      reread_same = FALSE;
+     NMSettingConnection          *s_con;
+     NMSettingInfiniband          *s_infiniband;
+     NMSettingIPConfig            *s_ip4;
+@@ -8407,6 +8407,7 @@ test_write_infiniband(gconstpointer test_data)
+     NMIPAddress *addr;
+     GError      *error          = NULL;
+     const char  *interface_name = NULL;
++    int          p_key;
+ 
+     connection = nm_simple_connection_new();
+ 
+@@ -8422,14 +8423,21 @@ test_write_infiniband(gconstpointer test_data)
+                  NM_SETTING_INFINIBAND_SETTING_NAME,
+                  NULL);
+ 
+-    if (NM_IN_SET(TEST_IDX, 1, 3))
+-        interface_name = "ib0.000c";
++    if (NM_IN_SET(TEST_IDX, 1, 2))
++        p_key = nmtst_get_rand_bool() ? 0x000c : 0x800c;
++    else
++        p_key = -1;
++
++    if (NM_IN_SET(TEST_IDX, 1, 3)) {
++        if (p_key >= 0x8000)
++            interface_name = "ib0.800c";
++    }
+ 
+     g_object_set(s_con, NM_SETTING_CONNECTION_INTERFACE_NAME, interface_name, NULL);
+ 
+     s_infiniband = _nm_connection_new_setting(connection, NM_TYPE_SETTING_INFINIBAND);
+     g_object_set(s_infiniband, NM_SETTING_INFINIBAND_TRANSPORT_MODE, "connected", NULL);
+-    if (NM_IN_SET(TEST_IDX, 1, 2)) {
++    if (p_key == -1) {
+         g_object_set(s_infiniband,
+                      NM_SETTING_INFINIBAND_MAC_ADDRESS,
+                      mac,
+@@ -8439,7 +8447,7 @@ test_write_infiniband(gconstpointer test_data)
+     } else {
+         g_object_set(s_infiniband,
+                      NM_SETTING_INFINIBAND_P_KEY,
+-                     12,
++                     p_key,
+                      NM_SETTING_INFINIBAND_PARENT,
+                      "ib0",
+                      NULL);
+@@ -8468,13 +8476,32 @@ test_write_infiniband(gconstpointer test_data)
+ 
+     nmtst_assert_connection_verifies(connection);
+ 
+-    _writer_new_connection(connection, TEST_SCRATCH_DIR, &testfile);
+-
+-    reread = _connection_from_file(testfile, NULL, TYPE_INFINIBAND, NULL);
++    if (p_key != -1 && p_key < 0x8000) {
++        expected = nm_simple_connection_new_clone(connection);
++        g_object_set(nm_connection_get_setting(expected, NM_TYPE_SETTING_INFINIBAND),
++                     NM_SETTING_INFINIBAND_P_KEY,
++                     (int) (p_key | 0x8000),
++                     NULL);
++    } else
++        expected = g_object_ref(connection);
+ 
+-    nmtst_assert_connection_equals(connection, TRUE, reread, FALSE);
++    _writer_new_connection_reread(connection,
++                                  TEST_SCRATCH_DIR,
++                                  &testfile,
++                                  NO_EXPECTED,
++                                  &reread,
++                                  &reread_same);
++    _assert_reread_same(expected, reread);
++    if (p_key == -1 || p_key > 0x8000)
++        g_assert(reread_same);
++    else
++        g_assert(!reread_same);
+ 
+     g_assert_cmpstr(interface_name, ==, nm_connection_get_interface_name(reread));
++    g_assert_cmpint(nm_setting_infiniband_get_p_key(
++                        _nm_connection_get_setting(reread, NM_TYPE_SETTING_INFINIBAND)),
++                    ==,
++                    p_key == -1 ? -1 : (p_key | 0x8000));
+ }
+ 
+ static void
+-- 
+2.40.1
+
+
+From 9f0fe4115af06f434443e2f9a7409011f09bd383 Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Wed, 24 May 2023 10:44:58 +0200
+Subject: [PATCH 2/8] libnm/docs: clarify behavior of infiniband.p-key property
+
+(cherry picked from commit ea18e66ef657b55eca941dca3de4949b950e656b)
+(cherry picked from commit 1e014d466a7008725e0b2c7cb41b1e00cb7868de)
+---
+ src/libnm-core-impl/nm-setting-infiniband.c   | 19 ++++++++++++++++---
+ src/libnmc-setting/settings-docs.h.in         |  2 +-
+ .../generate-docs-nm-settings-nmcli.xml.in    |  2 +-
+ 3 files changed, 18 insertions(+), 5 deletions(-)
+
+diff --git a/src/libnm-core-impl/nm-setting-infiniband.c b/src/libnm-core-impl/nm-setting-infiniband.c
+index 787b838b7694..df296becbaae 100644
+--- a/src/libnm-core-impl/nm-setting-infiniband.c
++++ b/src/libnm-core-impl/nm-setting-infiniband.c
+@@ -448,9 +448,20 @@ nm_setting_infiniband_class_init(NMSettingInfinibandClass *klass)
+      * NMSettingInfiniband:p-key:
+      *
+      * The InfiniBand P_Key to use for this device. A value of -1 means to use
+-     * the default P_Key (aka "the P_Key at index 0"). Otherwise, it is a 16-bit
+-     * unsigned integer, whose high bit is set if it is a "full membership"
+-     * P_Key.
++     * the default P_Key (aka "the P_Key at index 0"). Otherwise, it is a
++     * 16-bit unsigned integer, whose high bit 0x8000 is set if it is a "full
++     * membership" P_Key. The values 0 and 0x8000 are not allowed.
++     *
++     * With the p-key set, the interface name is always "$parent.$p_key".
++     * Setting "connection.interface-name" to another name is not supported.
++     *
++     * Note that kernel will internally always set the full membership bit,
++     * although the interface name does not reflect that. Thus, not setting
++     * the high bit is probably not useful.
++     *
++     * If the profile is stored in ifcfg-rh format, then the full membership
++     * bit is automatically added. To get consistent behavior, it is
++     * best to only use p-key values with the full membership bit set.
+      **/
+     /* ---ifcfg-rh---
+      * property: p-key
+@@ -459,6 +470,8 @@ nm_setting_infiniband_class_init(NMSettingInfinibandClass *klass)
+      * description: InfiniBand P_Key. The value can be a hex number prefixed with "0x"
+      *   or a decimal number.
+      *   When PKEY_ID is specified, PHYSDEV and DEVICE also must be specified.
++     *   Note that ifcfg-rh format will always automatically set the full membership
++     *   bit 0x8000. Other p-key cannot be stored.
+      * example: PKEY=yes PKEY_ID=2 PHYSDEV=mlx4_ib0 DEVICE=mlx4_ib0.8002
+      * ---end---
+      */
+diff --git a/src/libnmc-setting/settings-docs.h.in b/src/libnmc-setting/settings-docs.h.in
+index 6a5f4163485d..172f9b15bb98 100644
+--- a/src/libnmc-setting/settings-docs.h.in
++++ b/src/libnmc-setting/settings-docs.h.in
+@@ -153,7 +153,7 @@
+ #define DESCRIBE_DOC_NM_SETTING_GSM_USERNAME N_("The username used to authenticate with the network, if required.  Many providers do not require a username, or accept any username.  But if a username is required, it is specified here.")
+ #define DESCRIBE_DOC_NM_SETTING_INFINIBAND_MAC_ADDRESS N_("If specified, this connection will only apply to the IPoIB device whose permanent MAC address matches. This property does not change the MAC address of the device (i.e. MAC spoofing).")
+ #define DESCRIBE_DOC_NM_SETTING_INFINIBAND_MTU N_("If non-zero, only transmit packets of the specified size or smaller, breaking larger packets up into multiple frames.")
+-#define DESCRIBE_DOC_NM_SETTING_INFINIBAND_P_KEY N_("The InfiniBand P_Key to use for this device. A value of -1 means to use the default P_Key (aka \"the P_Key at index 0\"). Otherwise, it is a 16-bit unsigned integer, whose high bit is set if it is a \"full membership\" P_Key.")
++#define DESCRIBE_DOC_NM_SETTING_INFINIBAND_P_KEY N_("The InfiniBand P_Key to use for this device. A value of -1 means to use the default P_Key (aka \"the P_Key at index 0\"). Otherwise, it is a 16-bit unsigned integer, whose high bit 0x8000 is set if it is a \"full membership\" P_Key. The values 0 and 0x8000 are not allowed. With the p-key set, the interface name is always \"$parent.$p_key\". Setting \"connection.interface-name\" to another name is not supported. Note that kernel will internally always set the full membership bit, although the interface name does not reflect that. Thus, not setting the high bit is probably not useful. If the profile is stored in ifcfg-rh format, then the full membership bit is automatically added. To get consistent behavior, it is best to only use p-key values with the full membership bit set.")
+ #define DESCRIBE_DOC_NM_SETTING_INFINIBAND_PARENT N_("The interface name of the parent device of this device. Normally NULL, but if the \"p_key\" property is set, then you must specify the base device by setting either this property or \"mac-address\".")
+ #define DESCRIBE_DOC_NM_SETTING_INFINIBAND_TRANSPORT_MODE N_("The IP-over-InfiniBand transport mode. Either \"datagram\" or \"connected\".")
+ #define DESCRIBE_DOC_NM_SETTING_IP4_CONFIG_ADDRESSES N_("A list of IPv4 addresses and their prefix length. Multiple addresses can be separated by comma. For example \"192.168.1.5/24, 10.1.0.5/24\". The addresses are listed in decreasing priority, meaning the first address will be the primary address.")
+diff --git a/src/nmcli/generate-docs-nm-settings-nmcli.xml.in b/src/nmcli/generate-docs-nm-settings-nmcli.xml.in
+index adf7895f0d02..a59dacf2430d 100644
+--- a/src/nmcli/generate-docs-nm-settings-nmcli.xml.in
++++ b/src/nmcli/generate-docs-nm-settings-nmcli.xml.in
+@@ -614,7 +614,7 @@
+                   description="The IP-over-InfiniBand transport mode. Either &quot;datagram&quot; or &quot;connected&quot;." />
+         <property name="p-key"
+                   alias="p-key"
+-                  description="The InfiniBand P_Key to use for this device. A value of -1 means to use the default P_Key (aka &quot;the P_Key at index 0&quot;). Otherwise, it is a 16-bit unsigned integer, whose high bit is set if it is a &quot;full membership&quot; P_Key." />
++                  description="The InfiniBand P_Key to use for this device. A value of -1 means to use the default P_Key (aka &quot;the P_Key at index 0&quot;). Otherwise, it is a 16-bit unsigned integer, whose high bit 0x8000 is set if it is a &quot;full membership&quot; P_Key. The values 0 and 0x8000 are not allowed. With the p-key set, the interface name is always &quot;$parent.$p_key&quot;. Setting &quot;connection.interface-name&quot; to another name is not supported. Note that kernel will internally always set the full membership bit, although the interface name does not reflect that. Thus, not setting the high bit is probably not useful. If the profile is stored in ifcfg-rh format, then the full membership bit is automatically added. To get consistent behavior, it is best to only use p-key values with the full membership bit set." />
+         <property name="parent"
+                   alias="parent"
+                   description="The interface name of the parent device of this device. Normally NULL, but if the &quot;p_key&quot; property is set, then you must specify the base device by setting either this property or &quot;mac-address&quot;." />
+-- 
+2.40.1
+
+
+From 703b0cf4eb355844821b9e6463458dcada692a65 Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Wed, 24 May 2023 17:32:19 +0200
+Subject: [PATCH 3/8] libnm: normalize interface-name for infiniband profiles
+
+NetworkManager does not support changing the interface name for
+infiniband interfaces. Consequently, we verify that
+"connection.interface-name" is either unset or set to the expected
+"$parent.$p_key".  Anything else wouldn't work anyway and is rejected as
+invalid configuration. That brings problems however.
+
+Rejecting invalid configuration seems fine at first:
+
+  $ nmcli --offline connection add type infiniband infiniband.parent ib0 infiniband.p-key 0x8010 connection.interface-name xxx
+  Error: Error writing connection: connection.interface-name: interface name of software infiniband device must be 'ib0.8010' or unset (instead it is 'xxx')
+
+However, when we modify the p-key, we also get an error message:
+
+  $ nmcli --offline connection add type infiniband infiniband.parent ib0 infiniband.p-key 0x8010 connection.interface-name ib0.8010 |
+    nmcli --offline connection modify infiniband.p-key 5
+  Error: Error writing connection: connection.interface-name: interface name of software infiniband device must be 'ib0.0005' or unset (instead it is 'ib0.8010')
+
+It's worse, because ifcfg-rh reader will mangle the PKEY_ID with |=0x8000 to set
+the full membership flag. That means, if you add a profile like
+
+  $ nmcli --offline connection add type infiniband infiniband.parent ib0 infiniband.p-key 0x0010 connection.interface-name ib0.0010
+
+it gets written to ifcfg-rh file. Then upon reload it's invalid (as the
+interface name mismatches).
+
+There are multiple solutions for this. For example, ifcfg-rh reader could also
+mangle the connection.interface-name, so that the overall result is valid. Or
+we could just not validate at all, and accept any bogus interface-name.
+
+With this patch instead we will just normalize the invalid configuration to
+make it right.
+
+  $ nmcli --offline connection add type infiniband infiniband.parent ib0 infiniband.p-key 0x8010 connection.interface-name ib0.8010 |
+    nmcli --offline connection modify infiniband.p-key 5
+  ...
+
+The downside is that this happens silently, so a user doesn't
+notice that configuration is ignored:
+
+  $ nmcli --offline connection add type infiniband infiniband.parent ib0 infiniband.p-key 0x8010 connection.interface-name foo
+  ...
+  interface-name=ib0.8010
+
+This approach still seems preferable, because setting
+"connection.interface-name" for infiniband profiles makes little sense,
+so what we care here is to avoid problems.
+
+(cherry picked from commit 4610fd67e6e795131a358b292ec3fc1ba2a2250f)
+(cherry picked from commit 8b2612bfe630cdb676566a8249a14900910f82c5)
+---
+ src/libnm-core-impl/nm-connection.c         | 39 ++++++++++++++++-----
+ src/libnm-core-impl/nm-setting-infiniband.c | 14 ++++----
+ src/libnm-core-impl/tests/test-general.c    | 30 +++++++++++++---
+ 3 files changed, 63 insertions(+), 20 deletions(-)
+
+diff --git a/src/libnm-core-impl/nm-connection.c b/src/libnm-core-impl/nm-connection.c
+index 2f5bf3570935..67a9034dccba 100644
+--- a/src/libnm-core-impl/nm-connection.c
++++ b/src/libnm-core-impl/nm-connection.c
+@@ -1358,18 +1358,41 @@ _normalize_ip_config(NMConnection *self, GHashTable *parameters)
+ }
+ 
+ static gboolean
+-_normalize_infiniband_mtu(NMConnection *self)
++_normalize_infiniband(NMConnection *self)
+ {
+     NMSettingInfiniband *s_infini = nm_connection_get_setting_infiniband(self);
++    gboolean             changed  = FALSE;
++    const char          *interface_name;
++    int                  p_key;
+ 
+-    if (!s_infini || nm_setting_infiniband_get_mtu(s_infini) <= NM_INFINIBAND_MAX_MTU
+-        || !NM_IN_STRSET(nm_setting_infiniband_get_transport_mode(s_infini),
+-                         "datagram",
+-                         "connected"))
++    if (!s_infini)
+         return FALSE;
+ 
+-    g_object_set(s_infini, NM_SETTING_INFINIBAND_MTU, (guint) NM_INFINIBAND_MAX_MTU, NULL);
+-    return TRUE;
++    if (nm_setting_infiniband_get_mtu(s_infini) > NM_INFINIBAND_MAX_MTU) {
++        if (NM_IN_STRSET(nm_setting_infiniband_get_transport_mode(s_infini),
++                         "datagram",
++                         "connected")) {
++            g_object_set(s_infini, NM_SETTING_INFINIBAND_MTU, (guint) NM_INFINIBAND_MAX_MTU, NULL);
++            changed = TRUE;
++        }
++    }
++
++    if ((p_key = nm_setting_infiniband_get_p_key(s_infini)) != -1
++        && (interface_name = nm_connection_get_interface_name(self))) {
++        const char *virtual_iface_name;
++
++        virtual_iface_name = nm_setting_infiniband_get_virtual_interface_name(s_infini);
++
++        if (!nm_streq0(interface_name, virtual_iface_name)) {
++            g_object_set(nm_connection_get_setting_connection(self),
++                         NM_SETTING_CONNECTION_INTERFACE_NAME,
++                         virtual_iface_name,
++                         NULL);
++            changed = TRUE;
++        }
++    }
++
++    return changed;
+ }
+ 
+ static gboolean
+@@ -2000,7 +2023,7 @@ _connection_normalize(NMConnection *connection,
+     was_modified |= _normalize_invalid_slave_port_settings(connection);
+     was_modified |= _normalize_ip_config(connection, parameters);
+     was_modified |= _normalize_ethernet_link_neg(connection);
+-    was_modified |= _normalize_infiniband_mtu(connection);
++    was_modified |= _normalize_infiniband(connection);
+     was_modified |= _normalize_bond_mode(connection);
+     was_modified |= _normalize_bond_options(connection);
+     was_modified |= _normalize_wireless_mac_address_randomization(connection);
+diff --git a/src/libnm-core-impl/nm-setting-infiniband.c b/src/libnm-core-impl/nm-setting-infiniband.c
+index df296becbaae..7b242a539314 100644
+--- a/src/libnm-core-impl/nm-setting-infiniband.c
++++ b/src/libnm-core-impl/nm-setting-infiniband.c
+@@ -181,8 +181,8 @@ nm_setting_infiniband_get_virtual_interface_name(NMSettingInfiniband *setting)
+ static gboolean
+ verify(NMSetting *setting, NMConnection *connection, GError **error)
+ {
+-    NMSettingConnection        *s_con = NULL;
+-    NMSettingInfinibandPrivate *priv  = NM_SETTING_INFINIBAND_GET_PRIVATE(setting);
++    NMSettingConnection        *s_con;
++    NMSettingInfinibandPrivate *priv = NM_SETTING_INFINIBAND_GET_PRIVATE(setting);
+ 
+     if (priv->mac_address && !nm_utils_hwaddr_valid(priv->mac_address, INFINIBAND_ALEN)) {
+         g_set_error_literal(error,
+@@ -251,8 +251,10 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
+         }
+     }
+ 
+-    if (connection)
+-        s_con = nm_connection_get_setting_connection(connection);
++    /* *** errors above here should be always fatal, below NORMALIZABLE_ERROR *** */
++
++    s_con = connection ? nm_connection_get_setting_connection(connection) : NULL;
++
+     if (s_con) {
+         const char *interface_name = nm_setting_connection_get_interface_name(s_con);
+ 
+@@ -287,13 +289,11 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
+                                "%s.%s: ",
+                                NM_SETTING_CONNECTION_SETTING_NAME,
+                                NM_SETTING_CONNECTION_INTERFACE_NAME);
+-                return FALSE;
++                return NM_SETTING_VERIFY_NORMALIZABLE_ERROR;
+             }
+         }
+     }
+ 
+-    /* *** errors above here should be always fatal, below NORMALIZABLE_ERROR *** */
+-
+     if (priv->mtu > NM_INFINIBAND_MAX_MTU) {
+         /* Traditionally, MTU for "datagram" mode was limited to 2044
+          * and for "connected" mode it was 65520.
+diff --git a/src/libnm-core-impl/tests/test-general.c b/src/libnm-core-impl/tests/test-general.c
+index 1ff3b972a7a0..1feaae3ff5a7 100644
+--- a/src/libnm-core-impl/tests/test-general.c
++++ b/src/libnm-core-impl/tests/test-general.c
+@@ -6149,16 +6149,17 @@ test_connection_normalize_slave_type_2(void)
+ }
+ 
+ static void
+-test_connection_normalize_infiniband_mtu(void)
++test_connection_normalize_infiniband(void)
+ {
+     gs_unref_object NMConnection *con = NULL;
+     NMSettingInfiniband          *s_infini;
++    NMSettingConnection          *s_con;
+     guint                         mtu_regular = nmtst_rand_select(2044, 2045, 65520);
+ 
+-    con = nmtst_create_minimal_connection("test_connection_normalize_infiniband_mtu",
++    con = nmtst_create_minimal_connection("test_connection_normalize_infiniband",
+                                           NULL,
+                                           NM_SETTING_INFINIBAND_SETTING_NAME,
+-                                          NULL);
++                                          &s_con);
+ 
+     s_infini = nm_connection_get_setting_infiniband(con);
+     g_object_set(s_infini, NM_SETTING_INFINIBAND_TRANSPORT_MODE, "connected", NULL);
+@@ -6206,6 +6207,25 @@ test_connection_normalize_infiniband_mtu(void)
+                                                          NM_CONNECTION_ERROR_INVALID_PROPERTY);
+     nmtst_connection_normalize(con);
+     g_assert_cmpint(65520, ==, nm_setting_infiniband_get_mtu(s_infini));
++
++    g_object_set(s_infini,
++                 NM_SETTING_INFINIBAND_PARENT,
++                 "foo",
++                 NM_SETTING_INFINIBAND_P_KEY,
++                 0x005c,
++                 NULL);
++    nmtst_assert_connection_verifies_without_normalization(con);
++
++    g_object_set(s_con, NM_SETTING_CONNECTION_INTERFACE_NAME, "foo.005c", NULL);
++    nmtst_assert_connection_verifies_without_normalization(con);
++
++    g_object_set(s_con, NM_SETTING_CONNECTION_INTERFACE_NAME, "foo", NULL);
++    nmtst_assert_connection_verifies_after_normalization(con,
++                                                         NM_CONNECTION_ERROR,
++                                                         NM_CONNECTION_ERROR_INVALID_PROPERTY);
++
++    nmtst_connection_normalize(con);
++    g_assert_cmpstr(nm_connection_get_interface_name(con), ==, "foo.005c");
+ }
+ 
+ static void
+@@ -11109,8 +11129,8 @@ main(int argc, char **argv)
+                     test_connection_normalize_slave_type_1);
+     g_test_add_func("/core/general/test_connection_normalize_slave_type_2",
+                     test_connection_normalize_slave_type_2);
+-    g_test_add_func("/core/general/test_connection_normalize_infiniband_mtu",
+-                    test_connection_normalize_infiniband_mtu);
++    g_test_add_func("/core/general/test_connection_normalize_infiniband",
++                    test_connection_normalize_infiniband);
+     g_test_add_func("/core/general/test_connection_normalize_gateway_never_default",
+                     test_connection_normalize_gateway_never_default);
+     g_test_add_func("/core/general/test_connection_normalize_may_fail",
+-- 
+2.40.1
+
+
+From 72e6cbce4a8cbd5060edc5503214dab5cd46ba88 Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Wed, 24 May 2023 21:33:57 +0200
+Subject: [PATCH 4/8] libnm: add
+ nm_setting_infiniband_create_virtual_interface_name() helper
+
+(cherry picked from commit fa05d1c1695aacd2d7144a71795463a1f793288a)
+(cherry picked from commit e0ed06edefc3eac268f347a9c5aa6208bb9abb77)
+---
+ src/libnm-core-impl/nm-setting-infiniband.c | 9 ++++++++-
+ src/libnm-core-intern/nm-core-internal.h    | 2 ++
+ 2 files changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/src/libnm-core-impl/nm-setting-infiniband.c b/src/libnm-core-impl/nm-setting-infiniband.c
+index 7b242a539314..6d2ed7fb4828 100644
+--- a/src/libnm-core-impl/nm-setting-infiniband.c
++++ b/src/libnm-core-impl/nm-setting-infiniband.c
+@@ -144,6 +144,12 @@ nm_setting_infiniband_get_parent(NMSettingInfiniband *setting)
+     return NM_SETTING_INFINIBAND_GET_PRIVATE(setting)->parent;
+ }
+ 
++char *
++nm_setting_infiniband_create_virtual_interface_name(const char *parent, int p_key)
++{
++    return g_strdup_printf("%s.%04x", parent, p_key);
++}
++
+ /**
+  * nm_setting_infiniband_get_virtual_interface_name:
+  * @setting: the #NMSettingInfiniband
+@@ -172,7 +178,8 @@ nm_setting_infiniband_get_virtual_interface_name(NMSettingInfiniband *setting)
+         priv->virtual_iface_name_p_key         = priv->p_key;
+         priv->virtual_iface_name_parent_length = len;
+         g_free(priv->virtual_iface_name);
+-        priv->virtual_iface_name = g_strdup_printf("%s.%04x", priv->parent, priv->p_key);
++        priv->virtual_iface_name =
++            nm_setting_infiniband_create_virtual_interface_name(priv->parent, priv->p_key);
+     }
+ 
+     return priv->virtual_iface_name;
+diff --git a/src/libnm-core-intern/nm-core-internal.h b/src/libnm-core-intern/nm-core-internal.h
+index 4e1bab4723df..1857e03bbd60 100644
+--- a/src/libnm-core-intern/nm-core-internal.h
++++ b/src/libnm-core-intern/nm-core-internal.h
+@@ -321,6 +321,8 @@ typedef gpointer (*NMUtilsCopyFunc)(gpointer);
+ const char **
+ _nm_ip_address_get_attribute_names(const NMIPAddress *addr, gboolean sorted, guint *out_length);
+ 
++char *nm_setting_infiniband_create_virtual_interface_name(const char *parent, int p_key);
++
+ #define NM_SETTING_WIRED_S390_OPTION_MAX_LEN 200u
+ 
+ void     _nm_setting_wired_clear_s390_options(NMSettingWired *setting);
+-- 
+2.40.1
+
+
+From 0bbaa344c57468a57b9f83887fd755fd67701f75 Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Wed, 24 May 2023 21:38:27 +0200
+Subject: [PATCH 5/8] libnm: truncate too long interface name in
+ nm_setting_infiniband_create_virtual_interface_name()
+
+This is the same what kernel does, when the parent name is so long
+that it would result in a too long overall name.
+
+We need that the result is still a valid interface name.
+
+(cherry picked from commit 1009f1f11f991e41f856f2616c0972652f812a85)
+(cherry picked from commit 37994cef357506c246f3061d50474c14e425d9a9)
+---
+ src/libnm-core-impl/nm-setting-infiniband.c |  9 +++++-
+ src/libnm-core-impl/tests/test-general.c    | 32 +++++++++++++++++++++
+ 2 files changed, 40 insertions(+), 1 deletion(-)
+
+diff --git a/src/libnm-core-impl/nm-setting-infiniband.c b/src/libnm-core-impl/nm-setting-infiniband.c
+index 6d2ed7fb4828..0753a8db2d81 100644
+--- a/src/libnm-core-impl/nm-setting-infiniband.c
++++ b/src/libnm-core-impl/nm-setting-infiniband.c
+@@ -8,8 +8,10 @@
+ #include "nm-setting-infiniband.h"
+ 
+ #include <stdlib.h>
++#include <linux/if.h>
+ #include <linux/if_infiniband.h>
+ 
++#include "libnm-platform/nmp-base.h"
+ #include "nm-utils.h"
+ #include "nm-utils-private.h"
+ #include "nm-setting-private.h"
+@@ -147,7 +149,12 @@ nm_setting_infiniband_get_parent(NMSettingInfiniband *setting)
+ char *
+ nm_setting_infiniband_create_virtual_interface_name(const char *parent, int p_key)
+ {
+-    return g_strdup_printf("%s.%04x", parent, p_key);
++    char *s;
++
++    s = g_strdup_printf("%s.%04x", parent, (guint) p_key);
++    if (strlen(s) >= IFNAMSIZ)
++        s[IFNAMSIZ - 1] = '\0';
++    return s;
+ }
+ 
+ /**
+diff --git a/src/libnm-core-impl/tests/test-general.c b/src/libnm-core-impl/tests/test-general.c
+index 1feaae3ff5a7..fe070c3ea1f3 100644
+--- a/src/libnm-core-impl/tests/test-general.c
++++ b/src/libnm-core-impl/tests/test-general.c
+@@ -6226,6 +6226,38 @@ test_connection_normalize_infiniband(void)
+ 
+     nmtst_connection_normalize(con);
+     g_assert_cmpstr(nm_connection_get_interface_name(con), ==, "foo.005c");
++
++    g_object_set(s_infini,
++                 NM_SETTING_INFINIBAND_PARENT,
++                 "x234567890123",
++                 NM_SETTING_INFINIBAND_P_KEY,
++                 0x005c,
++                 NULL);
++    nmtst_assert_connection_verifies_after_normalization(con,
++                                                         NM_CONNECTION_ERROR,
++                                                         NM_CONNECTION_ERROR_INVALID_PROPERTY);
++
++    nmtst_connection_normalize(con);
++    g_assert_cmpstr(nm_connection_get_interface_name(con), ==, "x234567890123.0");
++
++#define iface_name(parent, p_key, expected)                                                        \
++    G_STMT_START                                                                                   \
++    {                                                                                              \
++        gs_free char *_s = nm_setting_infiniband_create_virtual_interface_name((parent), (p_key)); \
++                                                                                                   \
++        g_assert(nm_utils_ifname_valid_kernel(_s, NULL));                                          \
++        g_assert_cmpstr(_s, ==, (expected));                                                       \
++    }                                                                                              \
++    G_STMT_END
++
++    iface_name("foo", 15, "foo.000f");
++    iface_name("x23456789012345", 15, "x23456789012345");
++    iface_name("x2345678901234", 15, "x2345678901234.");
++    iface_name("x234567890123", 15, "x234567890123.0");
++    iface_name("x23456789012", 15, "x23456789012.00");
++    iface_name("x2345678901", 15, "x2345678901.000");
++    iface_name("x234567890", 15, "x234567890.000f");
++    iface_name("x23456789", 15, "x23456789.000f");
+ }
+ 
+ static void
+-- 
+2.40.1
+
+
+From 15cb222ac1acfa0e40bcfb15747c32211337c76c Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Wed, 24 May 2023 21:34:00 +0200
+Subject: [PATCH 6/8] ifcfg-rh: adjust infiniband p-key for later normalization
+ when writing to file
+
+(cherry picked from commit 82f5bff882a58226c22df1b735d4b434af883102)
+(cherry picked from commit a6316c61f09ab2cd169040815faae007077dcbe8)
+---
+ .../plugins/ifcfg-rh/nms-ifcfg-rh-writer.c    | 36 +++++++++++++++----
+ 1 file changed, 29 insertions(+), 7 deletions(-)
+
+diff --git a/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-writer.c b/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-writer.c
+index e340c9fe1374..9610cd647114 100644
+--- a/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-writer.c
++++ b/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-writer.c
+@@ -1023,7 +1023,10 @@ write_wireless_setting(NMConnection *connection,
+ }
+ 
+ static gboolean
+-write_infiniband_setting(NMConnection *connection, shvarFile *ifcfg, GError **error)
++write_infiniband_setting(NMConnection *connection,
++                         shvarFile    *ifcfg,
++                         char        **out_interface_name,
++                         GError      **error)
+ {
+     NMSettingInfiniband *s_infiniband;
+     const char          *mac, *transport_mode, *parent;
+@@ -1051,12 +1054,28 @@ write_infiniband_setting(NMConnection *connection, shvarFile *ifcfg, GError **er
+ 
+     p_key = nm_setting_infiniband_get_p_key(s_infiniband);
+     if (p_key != -1) {
++        /* The reader normalizes KKEY_ID with |=0x8000. Also do that when
++         * writing the profile so that what we write, is consistent with what
++         * we would read. */
++        p_key |= 0x8000;
++
+         svSetValueStr(ifcfg, "PKEY", "yes");
+         svSetValueInt64(ifcfg, "PKEY_ID", p_key);
+ 
+         parent = nm_setting_infiniband_get_parent(s_infiniband);
+-        if (parent)
+-            svSetValueStr(ifcfg, "PHYSDEV", parent);
++        svSetValueStr(ifcfg, "PHYSDEV", parent);
++
++        if (parent && nm_connection_get_interface_name(connection)) {
++            /* The connection.interface-name depends on the p-key. Also,
++             * nm_connection_normalize() will automatically adjust the
++             * interface-name to match the p-key.
++             *
++             * As we patched the p-key above, also anticipate that change, and
++             * don't write a DEVICE= to the file, which would we normalize
++             * differently, when reading it back. */
++            *out_interface_name =
++                nm_setting_infiniband_create_virtual_interface_name(parent, p_key);
++        }
+     }
+ 
+     svSetValueStr(ifcfg, "TYPE", TYPE_INFINIBAND);
+@@ -2094,7 +2113,7 @@ write_dcb_setting(NMConnection *connection, shvarFile *ifcfg, GError **error)
+ }
+ 
+ static void
+-write_connection_setting(NMSettingConnection *s_con, shvarFile *ifcfg)
++write_connection_setting(NMSettingConnection *s_con, shvarFile *ifcfg, const char *interface_name)
+ {
+     guint32                       n, i;
+     nm_auto_free_gstring GString *str = NULL;
+@@ -2111,7 +2130,9 @@ write_connection_setting(NMSettingConnection *s_con, shvarFile *ifcfg)
+     svSetValueStr(ifcfg, "NAME", nm_setting_connection_get_id(s_con));
+     svSetValueStr(ifcfg, "UUID", nm_setting_connection_get_uuid(s_con));
+     svSetValueStr(ifcfg, "STABLE_ID", nm_setting_connection_get_stable_id(s_con));
+-    svSetValueStr(ifcfg, "DEVICE", nm_setting_connection_get_interface_name(s_con));
++    svSetValueStr(ifcfg,
++                  "DEVICE",
++                  interface_name ?: nm_setting_connection_get_interface_name(s_con));
+     svSetValueBoolean(ifcfg, "ONBOOT", nm_setting_connection_get_autoconnect(s_con));
+ 
+     vint = nm_setting_connection_get_autoconnect_priority(s_con);
+@@ -3294,6 +3315,7 @@ do_write_construct(NMConnection                   *connection,
+     nm_auto_shvar_file_close shvarFile *route_content_svformat = NULL;
+     nm_auto_free_gstring GString       *route_content          = NULL;
+     nm_auto_free_gstring GString       *route6_content         = NULL;
++    gs_free char                       *interface_name         = NULL;
+ 
+     nm_assert(NM_IS_CONNECTION(connection));
+     nm_assert(_nm_connection_verify(connection, NULL) == NM_SETTING_VERIFY_SUCCESS);
+@@ -3399,7 +3421,7 @@ do_write_construct(NMConnection                   *connection,
+         if (!write_wireless_setting(connection, ifcfg, secrets, &no_8021x, error))
+             return FALSE;
+     } else if (!strcmp(type, NM_SETTING_INFINIBAND_SETTING_NAME)) {
+-        if (!write_infiniband_setting(connection, ifcfg, error))
++        if (!write_infiniband_setting(connection, ifcfg, &interface_name, error))
+             return FALSE;
+     } else if (!strcmp(type, NM_SETTING_BOND_SETTING_NAME)) {
+         if (!write_bond_setting(connection, ifcfg, &wired, error))
+@@ -3504,7 +3526,7 @@ do_write_construct(NMConnection                   *connection,
+ 
+     write_ip_routing_rules(connection, ifcfg, route_ignore);
+ 
+-    write_connection_setting(s_con, ifcfg);
++    write_connection_setting(s_con, ifcfg, interface_name);
+ 
+     NM_SET_OUT(out_ifcfg, g_steal_pointer(&ifcfg));
+     NM_SET_OUT(out_blobs, g_steal_pointer(&blobs));
+-- 
+2.40.1
+
+
+From fe3789da37f394112bdb07ffc7935d935449e17a Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Mon, 5 Jun 2023 08:52:09 +0200
+Subject: [PATCH 7/8] ifcfg-rh/tests: add test for infiniband profile with
+ PKEY_ID in ifcfg format
+
+https://bugzilla.redhat.com/show_bug.cgi?id=2209164
+(cherry picked from commit 0d0704eaa02c45e10917ce503f50b4ca885285aa)
+(cherry picked from commit 0b56618b198c6cb3f99e84554487dc6eea66d468)
+(cherry picked from commit 2cc34244e1d53b4f2ca8efa59755aa68cd663365)
+---
+ Makefile.am                                   |  4 +-
+ ...test-infiniband => ifcfg-test-infiniband0} |  0
+ .../network-scripts/ifcfg-test-infiniband1    | 12 ++++++
+ .../network-scripts/ifcfg-test-infiniband2    | 12 ++++++
+ .../plugins/ifcfg-rh/tests/test-ifcfg-rh.c    | 38 ++++++++++++++++---
+ 5 files changed, 59 insertions(+), 7 deletions(-)
+ rename src/core/settings/plugins/ifcfg-rh/tests/network-scripts/{ifcfg-test-infiniband => ifcfg-test-infiniband0} (100%)
+ create mode 100644 src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-infiniband1
+ create mode 100644 src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-infiniband2
+
+diff --git a/Makefile.am b/Makefile.am
+index 7cdb1120ccc3..a42474b714be 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -3457,7 +3457,9 @@ EXTRA_DIST += \
+ 	src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-fcoe-fabric \
+ 	src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-fcoe-vn2vn \
+ 	src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-ibft \
+-	src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-infiniband \
++	src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-infiniband0 \
++	src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-infiniband1 \
++	src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-infiniband2 \
+ 	src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-ip6-disabled.cexpected \
+ 	src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-ipoib \
+ 	src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-link_local \
+diff --git a/src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-infiniband b/src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-infiniband0
+similarity index 100%
+rename from src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-infiniband
+rename to src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-infiniband0
+diff --git a/src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-infiniband1 b/src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-infiniband1
+new file mode 100644
+index 000000000000..dcb7758e6ed9
+--- /dev/null
++++ b/src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-infiniband1
+@@ -0,0 +1,12 @@
++TYPE=InfiniBand
++HWADDR=80:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:00:11:22
++CONNECTED_MODE=yes
++MTU=65520
++IPADDR=192.168.2.2
++NETMASK=255.255.255.0
++GATEWAY=192.168.2.1
++
++DEVICE=ib0.80c1
++PKEY=yes
++PKEY_ID=0x00c1
++PHYSDEV=ib0
+diff --git a/src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-infiniband2 b/src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-infiniband2
+new file mode 100644
+index 000000000000..2e6d9edf3ac4
+--- /dev/null
++++ b/src/core/settings/plugins/ifcfg-rh/tests/network-scripts/ifcfg-test-infiniband2
+@@ -0,0 +1,12 @@
++TYPE=InfiniBand
++HWADDR=80:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:00:11:22
++CONNECTED_MODE=yes
++MTU=65520
++IPADDR=192.168.2.2
++NETMASK=255.255.255.0
++GATEWAY=192.168.2.1
++
++DEVICE=ib0.00c1
++PKEY=yes
++PKEY_ID=0x00c1
++PHYSDEV=ib0
+diff --git a/src/core/settings/plugins/ifcfg-rh/tests/test-ifcfg-rh.c b/src/core/settings/plugins/ifcfg-rh/tests/test-ifcfg-rh.c
+index 01eb24216aec..b391aa2392a8 100644
+--- a/src/core/settings/plugins/ifcfg-rh/tests/test-ifcfg-rh.c
++++ b/src/core/settings/plugins/ifcfg-rh/tests/test-ifcfg-rh.c
+@@ -8337,8 +8337,9 @@ test_write_bond_port(void)
+ }
+ 
+ static void
+-test_read_infiniband(void)
++test_read_infiniband(gconstpointer test_data)
+ {
++    const guint                   TEST_IDX   = GPOINTER_TO_UINT(test_data);
+     gs_unref_object NMConnection *connection = NULL;
+     NMSettingInfiniband          *s_infiniband;
+     char                         *unmanaged = NULL;
+@@ -8347,11 +8348,15 @@ test_read_infiniband(void)
+                                                          0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc,
+                                                          0xdd, 0xee, 0xff, 0x00, 0x11, 0x22};
+     const char *transport_mode;
++    const char *test_files[] = {
++        TEST_IFCFG_DIR "/ifcfg-test-infiniband0",
++        TEST_IFCFG_DIR "/ifcfg-test-infiniband1",
++        TEST_IFCFG_DIR "/ifcfg-test-infiniband2",
++    };
+ 
+-    connection = _connection_from_file(TEST_IFCFG_DIR "/ifcfg-test-infiniband",
+-                                       NULL,
+-                                       TYPE_INFINIBAND,
+-                                       &unmanaged);
++    g_assert(TEST_IDX < G_N_ELEMENTS(test_files));
++
++    connection = _connection_from_file(test_files[TEST_IDX], NULL, TYPE_INFINIBAND, &unmanaged);
+     g_assert(!unmanaged);
+ 
+     s_infiniband = nmtst_connection_assert_setting(connection, NM_TYPE_SETTING_INFINIBAND);
+@@ -8363,6 +8368,25 @@ test_read_infiniband(void)
+     transport_mode = nm_setting_infiniband_get_transport_mode(s_infiniband);
+     g_assert(transport_mode);
+     g_assert_cmpstr(transport_mode, ==, "connected");
++
++    nmtst_assert_connection_verifies_without_normalization(connection);
++
++    switch (TEST_IDX) {
++    case 0:
++        g_assert_cmpint(nm_setting_infiniband_get_p_key(s_infiniband), ==, -1);
++        g_assert_cmpstr(nm_setting_infiniband_get_parent(s_infiniband), ==, NULL);
++        g_assert_cmpstr(nm_connection_get_interface_name(connection), ==, "ib0");
++        break;
++    case 1:
++    case 2:
++        g_assert_cmpint(nm_setting_infiniband_get_p_key(s_infiniband), ==, 0x80c1);
++        g_assert_cmpstr(nm_setting_infiniband_get_parent(s_infiniband), ==, "ib0");
++        g_assert_cmpstr(nm_connection_get_interface_name(connection), ==, "ib0.80c1");
++        break;
++    default:
++        g_assert_not_reached();
++        break;
++    }
+ }
+ 
+ static void
+@@ -10673,7 +10697,9 @@ main(int argc, char **argv)
+ 
+     g_test_add_func(TPATH "wifi/read/wep-no-keys", test_read_wifi_wep_no_keys);
+     g_test_add_func(TPATH "wifi/read/wep-agent-keys", test_read_wifi_wep_agent_keys);
+-    g_test_add_func(TPATH "infiniband/read", test_read_infiniband);
++    g_test_add_data_func(TPATH "infiniband/read/0", GUINT_TO_POINTER(0), test_read_infiniband);
++    g_test_add_data_func(TPATH "infiniband/read/1", GUINT_TO_POINTER(1), test_read_infiniband);
++    g_test_add_data_func(TPATH "infiniband/read/2", GUINT_TO_POINTER(2), test_read_infiniband);
+     g_test_add_func(TPATH "ipoib/read", test_read_ipoib);
+     g_test_add_func(TPATH "vlan/read", test_read_vlan_interface);
+     g_test_add_func(TPATH "vlan/read-flags-1", test_read_vlan_flags_1);
+-- 
+2.40.1
+
+
+From 5263adc4c930edb9b0a7e7e38d4fa5682c63fe2d Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Tue, 30 May 2023 17:51:02 +0200
+Subject: [PATCH 8/8] ifcfg: better handle non-full-membership PKEY_ID with new
+ PKEY_ID_NM variable
+
+Infiniband profiles can have a p-key set. Both in kernel API
+("create_child" sysctl) and in NetworkManager API, that key can range
+from 0x0001 to 0xFFFF (0x8000 excluded). NetworkManager does not support
+renaming the interface, so kernel always assigns the interface name
+"$PHYSDEV.$PKEY_ID" (with $PKEY_ID as 4 character hex digits).
+
+Note that the highest bit in the p-key (0x8000) is the full-membership
+flag. Internally, kernel only supports full-membership so when we create
+for example "ib0.00c1" and "ib0.80c1" interfaces, their actually used
+p-key is in both cases 0x80c1 and you can see it with `ip -d link`.
+Nonetheless, kernel and NetworkManager allow to configure the p-key
+without the highest bit set, and the result differs in the interface
+name.
+
+Note that initscripts' ifup-ib0 would always internally coerce the
+PKEY_ID variable to have the high bit set ([1]). It also would require
+that the `DEVICE=` variable is specified and matches the expected
+interface name. So both these configurations are identical and valid:
+
+  DEVICE=ib0.80c1
+  PHYSDEV=ib0
+  PKEY_ID=0x80c1
+
+and
+
+  DEVICE=ib0.80c1
+  PHYSDEV=ib0
+  PKEY_ID=0x00c1
+
+Historically, NetworkManager would also implement the same restrictions
+([2], [3], [4]). That meant, not all valid NetworkManager infiniband
+profiles could be expressed as  ifcfg file. For example, NetworkManager
+allows to have "connection.interface-name" (`DEVICE=`) unset (which
+ifup-ib and ifcfg reader did not allow). Also, NetworkManager would
+allow configuring a "infiniband.p-key" without full membership flag, and
+the reader would mangle that.
+
+This caused various problems to the point that when you configure an
+infiniband.p-key with a non-full-membership key, the ifcfg-rh written by
+NetworkManager was invalid. Either, you could leave
+"connection.interface-name" unset, but then the reader would complain
+about missing `DEVICE=`. Or, we could write `DEVICE=ib0.00c1;
+PKEY_ID=0x00c1`, which was invalid as we expected `DEVICE=ib0.80c1`.
+
+This was addressed by rhbz 2122703 ([5]). The fix was to
+
+  - not require a `DEVICE=` ([6]).
+  - don't mangle the `PKEY_ID=` in the reader ([7]).
+
+which happened in 1.41.2 and 1.40.2 (rhel-8.8).
+
+With this change, we could persist any valid infiniband profile to ifcfg
+format. We also could read back any valid ifcfg file that NetworkManager
+would have written in the past (note that it could not write valid ifcfg
+files previously, if the p-key didn't have the full-membership key set).
+
+The problem is, that users were used to edit ifcfg files by hand, and
+users would have files with:
+
+  DEVICE=ib0.80c1
+  PHYSDEV=ib0
+  PKEY_ID=0x00c1
+
+This files had worked before, but now failed to verify as we would
+expect `DEVICE=ib0.00c1`. Also, there was a change in behavior that
+PKEY_ID is now interpreted without the high bit set. This is reported as
+rhbz 2209164 ([8]).
+
+We will do several things to fix that:
+
+1) we now normalize the "connection.interface-name" to be valid. It was
+  not useful to set it anyway, as it was redundant. Complaining about a
+  redundant setting, which makes little sense to configure, is not useful.
+  This is done by [9].
+
+2) we now again treat PKEY_ID= as if it had 0x8000 flag set. This was done by
+  [10].
+
+With step 1) and 2), we are able to read any existing ifcfg files out
+there in the way we did before 1.41.2.
+
+There is however one piece missing. When we now create a profile using
+nmcli/libnm/D-Bus, which has a non-full-membership p-key, then the
+profile gets mangled in the process.
+
+If the user uses NetworkManager API to configure an interface and
+chooses a non-full-membership p-key, then this should work the same as
+with keyfile plugin (or on rhel-9, where keyfile is the default). Note
+that before 1.41.2 it didn't work at all, when the user used ifcfg-rh
+backend. Likely(?) there are no users who rely on creating such a profile
+with nmcli/libnm/D-Bus and expect to automatically have the p-key
+normalized. That didn't work before 1.41.2 and didn't behave that way
+between 1.41.2 and now.
+
+This patch fixes that by introducing a new key PKEY_ID_NM= for holding
+the real p-key. Now ifcfg backend is consistent with handling infiniband
+profiles, and old, hand-written ifcfg files still work as before.
+
+There is of course change in behavior, that ifcfg files between 1.41.2
+and now were interpreted differently. But that is bug 2209164 ([8]) and
+what we fix here.
+
+For now strong reasons, we keep writing the PKEY_ID to file too. It's
+redundant, but that is what a human might expect there.
+
+[1]  https://src.fedoraproject.org/rpms/rdma/blob/05333c3602aa3c1d82a6363521bdd5a498eac6d0/f/rdma.ifup-ib#_75
+[2]  https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/blob/1.40.0/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-reader.c#L5386
+[3]  https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/commit/cb5606cf1c7a1638fea2858ddd3493a7364f5738#a7a78fccb2c8c945fd09038656ae734c1b0349ab_3493_3532
+[4]  https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/commit/cb5606cf1c7a1638fea2858ddd3493a7364f5738#a7a78fccb2c8c945fd09038656ae734c1b0349ab_3493_3506
+[5]  https://bugzilla.redhat.com/show_bug.cgi?id=2122703
+[6]  https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/commit/4c32dd9d252959b9bab5de6277418939b64d1bb1
+[7]  https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/commit/a4fe16a426097eee263cb3ef831dcea468b1ca26
+[8]  https://bugzilla.redhat.com/show_bug.cgi?id=2209164
+[9]  https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/commit/4610fd67e6e795131a358b292ec3fc1ba2a2250f
+[10] https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/commit/f8e5e07355e23b6d59b1b1c9cd2387c6b40b214b
+
+(cherry picked from commit 5e3e38f291a5bb1499602721401335b1cb585cab)
+(cherry picked from commit d8f7fec9e0d395461eab58185398557dc476c716)
+(cherry picked from commit cb73ae3f0bbc2a7e083f79f2a0c64a503dc85510)
+---
+ .../plugins/ifcfg-rh/nms-ifcfg-rh-reader.c    | 28 +++++++----------
+ .../plugins/ifcfg-rh/nms-ifcfg-rh-utils.c     |  1 +
+ .../plugins/ifcfg-rh/nms-ifcfg-rh-utils.h     |  2 +-
+ .../plugins/ifcfg-rh/nms-ifcfg-rh-writer.c    | 30 ++++++++-----------
+ .../plugins/ifcfg-rh/tests/test-ifcfg-rh.c    | 19 ++----------
+ src/libnm-core-impl/nm-setting-infiniband.c   | 24 +++++++--------
+ src/libnmc-setting/settings-docs.h.in         |  2 +-
+ .../generate-docs-nm-settings-nmcli.xml.in    |  2 +-
+ 8 files changed, 42 insertions(+), 66 deletions(-)
+
+diff --git a/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-reader.c b/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-reader.c
+index 533379c67868..ad14209a3c94 100644
+--- a/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-reader.c
++++ b/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-reader.c
+@@ -5358,6 +5358,7 @@ parse_infiniband_p_key(shvarFile *ifcfg, int *out_p_key, char **out_parent, GErr
+     gs_free char *physdev = NULL;
+     gs_free char *pkey_id = NULL;
+     int           id;
++    int           fixup_id = 0;
+ 
+     physdev = svGetValueStr_cp(ifcfg, "PHYSDEV");
+     if (!physdev) {
+@@ -5368,7 +5369,14 @@ parse_infiniband_p_key(shvarFile *ifcfg, int *out_p_key, char **out_parent, GErr
+         return FALSE;
+     }
+ 
+-    pkey_id = svGetValueStr_cp(ifcfg, "PKEY_ID");
++    pkey_id = svGetValueStr_cp(ifcfg, "PKEY_ID_NM");
++    if (!pkey_id) {
++        /* Only check for "$PKEY_ID". That key is interpreted as having the
++         * full membership flag set ("fixup_id"). */
++        fixup_id = 0x8000;
++        pkey_id  = svGetValueStr_cp(ifcfg, "PKEY_ID");
++    }
++
+     if (!pkey_id) {
+         g_set_error(error,
+                     NM_SETTINGS_ERROR,
+@@ -5387,23 +5395,7 @@ parse_infiniband_p_key(shvarFile *ifcfg, int *out_p_key, char **out_parent, GErr
+         return FALSE;
+     }
+ 
+-    /* The highest bit 0x8000 indicates full membership, which kernel always
+-     * automatically sets.
+-     *
+-     * NetworkManager supports p-keys without the high bit set. That affects
+-     * the interface name (nmp_utils_new_infiniband_name()) and is what
+-     * we write to "create_child"/"delete_child" sysctl. Kernel will honor
+-     * such p-keys for the interface name, but for other purposes it adds the
+-     * highest bit. That makes using p-keys without the highest bit odd.
+-     *
+-     * Historically, /etc/sysconfig/network-scripts/ifup-ib would always add "|=0x8000".
+-     * The reader does that too.
+-     *
+-     * Note that this means ifcfg cannot handle p-keys without the highest bit set,
+-     * and when trying to store that to ifcfg format, the profile will be mangled/modified
+-     * by the ifcg plugin (unlike keyfile backend, which preserves the original p-key value).
+-     */
+-    id |= 0x8000;
++    id |= fixup_id;
+ 
+     *out_p_key  = id;
+     *out_parent = g_steal_pointer(&physdev);
+diff --git a/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-utils.c b/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-utils.c
+index ef4276da7377..7fc33967acb0 100644
+--- a/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-utils.c
++++ b/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-utils.c
+@@ -1028,6 +1028,7 @@ const NMSIfcfgKeyTypeInfo nms_ifcfg_well_known_keys[] = {
+     _KEY_TYPE("PHYSDEV", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
+     _KEY_TYPE("PKEY", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
+     _KEY_TYPE("PKEY_ID", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
++    _KEY_TYPE("PKEY_ID_NM", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
+     _KEY_TYPE("PMF", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
+     _KEY_TYPE("PORTNAME", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
+     _KEY_TYPE("POWERSAVE", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
+diff --git a/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-utils.h b/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-utils.h
+index e3d3d8732103..7302625cc13b 100644
+--- a/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-utils.h
++++ b/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-utils.h
+@@ -33,7 +33,7 @@ typedef struct {
+     NMSIfcfgKeyTypeFlags key_flags;
+ } NMSIfcfgKeyTypeInfo;
+ 
+-extern const NMSIfcfgKeyTypeInfo nms_ifcfg_well_known_keys[257];
++extern const NMSIfcfgKeyTypeInfo nms_ifcfg_well_known_keys[258];
+ 
+ const NMSIfcfgKeyTypeInfo *nms_ifcfg_well_known_key_find_info(const char *key, gssize *out_idx);
+ 
+diff --git a/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-writer.c b/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-writer.c
+index 9610cd647114..b78bbe416655 100644
+--- a/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-writer.c
++++ b/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-writer.c
+@@ -1054,28 +1054,24 @@ write_infiniband_setting(NMConnection *connection,
+ 
+     p_key = nm_setting_infiniband_get_p_key(s_infiniband);
+     if (p_key != -1) {
+-        /* The reader normalizes KKEY_ID with |=0x8000. Also do that when
+-         * writing the profile so that what we write, is consistent with what
+-         * we would read. */
+-        p_key |= 0x8000;
+-
+         svSetValueStr(ifcfg, "PKEY", "yes");
+-        svSetValueInt64(ifcfg, "PKEY_ID", p_key);
+ 
+-        parent = nm_setting_infiniband_get_parent(s_infiniband);
+-        svSetValueStr(ifcfg, "PHYSDEV", parent);
++        svSetValueInt64(ifcfg, "PKEY_ID", p_key);
+ 
+-        if (parent && nm_connection_get_interface_name(connection)) {
+-            /* The connection.interface-name depends on the p-key. Also,
+-             * nm_connection_normalize() will automatically adjust the
+-             * interface-name to match the p-key.
++        if (!NM_FLAGS_HAS(p_key, 0x8000)) {
++            /* initscripts' ifup-ib used to always interpret the PKEY_ID with
++             * the full membership flag (0x8000) set. For compatibility, we do
++             * interpret PKEY_ID as having that flag set.
+              *
+-             * As we patched the p-key above, also anticipate that change, and
+-             * don't write a DEVICE= to the file, which would we normalize
+-             * differently, when reading it back. */
+-            *out_interface_name =
+-                nm_setting_infiniband_create_virtual_interface_name(parent, p_key);
++             * However, now we want to persist a p-key which doesn't have the
++             * flag. Use a NetworkManager specific variable for that. This configuration
++             * is not supported by initscripts' ifup-ib.
++             */
++            svSetValueInt64(ifcfg, "PKEY_ID_NM", p_key);
+         }
++
++        parent = nm_setting_infiniband_get_parent(s_infiniband);
++        svSetValueStr(ifcfg, "PHYSDEV", parent);
+     }
+ 
+     svSetValueStr(ifcfg, "TYPE", TYPE_INFINIBAND);
+diff --git a/src/core/settings/plugins/ifcfg-rh/tests/test-ifcfg-rh.c b/src/core/settings/plugins/ifcfg-rh/tests/test-ifcfg-rh.c
+index b391aa2392a8..b5f830c8660a 100644
+--- a/src/core/settings/plugins/ifcfg-rh/tests/test-ifcfg-rh.c
++++ b/src/core/settings/plugins/ifcfg-rh/tests/test-ifcfg-rh.c
+@@ -8419,7 +8419,6 @@ test_write_infiniband(gconstpointer test_data)
+     const int                     TEST_IDX    = GPOINTER_TO_INT(test_data);
+     nmtst_auto_unlinkfile char   *testfile    = NULL;
+     gs_unref_object NMConnection *connection  = NULL;
+-    gs_unref_object NMConnection *expected    = NULL;
+     gs_unref_object NMConnection *reread      = NULL;
+     gboolean                      reread_same = FALSE;
+     NMSettingConnection          *s_con;
+@@ -8500,32 +8499,20 @@ test_write_infiniband(gconstpointer test_data)
+ 
+     nmtst_assert_connection_verifies(connection);
+ 
+-    if (p_key != -1 && p_key < 0x8000) {
+-        expected = nm_simple_connection_new_clone(connection);
+-        g_object_set(nm_connection_get_setting(expected, NM_TYPE_SETTING_INFINIBAND),
+-                     NM_SETTING_INFINIBAND_P_KEY,
+-                     (int) (p_key | 0x8000),
+-                     NULL);
+-    } else
+-        expected = g_object_ref(connection);
+-
+     _writer_new_connection_reread(connection,
+                                   TEST_SCRATCH_DIR,
+                                   &testfile,
+                                   NO_EXPECTED,
+                                   &reread,
+                                   &reread_same);
+-    _assert_reread_same(expected, reread);
+-    if (p_key == -1 || p_key > 0x8000)
+-        g_assert(reread_same);
+-    else
+-        g_assert(!reread_same);
++    _assert_reread_same(connection, reread);
++    g_assert(reread_same);
+ 
+     g_assert_cmpstr(interface_name, ==, nm_connection_get_interface_name(reread));
+     g_assert_cmpint(nm_setting_infiniband_get_p_key(
+                         _nm_connection_get_setting(reread, NM_TYPE_SETTING_INFINIBAND)),
+                     ==,
+-                    p_key == -1 ? -1 : (p_key | 0x8000));
++                    p_key);
+ }
+ 
+ static void
+diff --git a/src/libnm-core-impl/nm-setting-infiniband.c b/src/libnm-core-impl/nm-setting-infiniband.c
+index 0753a8db2d81..6df92ceb4777 100644
+--- a/src/libnm-core-impl/nm-setting-infiniband.c
++++ b/src/libnm-core-impl/nm-setting-infiniband.c
+@@ -461,31 +461,31 @@ nm_setting_infiniband_class_init(NMSettingInfinibandClass *klass)
+     /**
+      * NMSettingInfiniband:p-key:
+      *
+-     * The InfiniBand P_Key to use for this device. A value of -1 means to use
+-     * the default P_Key (aka "the P_Key at index 0"). Otherwise, it is a
++     * The InfiniBand p-key to use for this device. A value of -1 means to use
++     * the default p-key (aka "the p-key at index 0"). Otherwise, it is a
+      * 16-bit unsigned integer, whose high bit 0x8000 is set if it is a "full
+-     * membership" P_Key. The values 0 and 0x8000 are not allowed.
++     * membership" p-key. The values 0 and 0x8000 are not allowed.
+      *
+      * With the p-key set, the interface name is always "$parent.$p_key".
+      * Setting "connection.interface-name" to another name is not supported.
+      *
+      * Note that kernel will internally always set the full membership bit,
+-     * although the interface name does not reflect that. Thus, not setting
+-     * the high bit is probably not useful.
+-     *
+-     * If the profile is stored in ifcfg-rh format, then the full membership
+-     * bit is automatically added. To get consistent behavior, it is
+-     * best to only use p-key values with the full membership bit set.
++     * although the interface name does not reflect that. Usually the user
++     * would want to configure a full membership p-key with 0x8000 flag set.
+      **/
+     /* ---ifcfg-rh---
+      * property: p-key
+-     * variable: PKEY_ID (and PKEY=yes)
++     * variable: PKEY_ID or PKEY_ID_NM(*) (requires PKEY=yes)
+      * default: PKEY=no
+      * description: InfiniBand P_Key. The value can be a hex number prefixed with "0x"
+      *   or a decimal number.
+-     *   When PKEY_ID is specified, PHYSDEV and DEVICE also must be specified.
++     *   When PKEY_ID is specified, PHYSDEV must be specified.
+      *   Note that ifcfg-rh format will always automatically set the full membership
+-     *   bit 0x8000. Other p-key cannot be stored.
++     *   flag 0x8000 for the PKEY_ID variable. To express IDs without the full membership
++     *   flag, use PKEY_ID_NM. Note that kernel internally treats the interface as
++     *   having the full membership flag set, this mainly affects the interface name.
++     *   For the ifcfg file to be supported by initscripts' ifup-ib, the DEVICE=
++     *   must always be set. NetworkManager does not require that.
+      * example: PKEY=yes PKEY_ID=2 PHYSDEV=mlx4_ib0 DEVICE=mlx4_ib0.8002
+      * ---end---
+      */
+diff --git a/src/libnmc-setting/settings-docs.h.in b/src/libnmc-setting/settings-docs.h.in
+index 172f9b15bb98..c3fa316cf65a 100644
+--- a/src/libnmc-setting/settings-docs.h.in
++++ b/src/libnmc-setting/settings-docs.h.in
+@@ -153,7 +153,7 @@
+ #define DESCRIBE_DOC_NM_SETTING_GSM_USERNAME N_("The username used to authenticate with the network, if required.  Many providers do not require a username, or accept any username.  But if a username is required, it is specified here.")
+ #define DESCRIBE_DOC_NM_SETTING_INFINIBAND_MAC_ADDRESS N_("If specified, this connection will only apply to the IPoIB device whose permanent MAC address matches. This property does not change the MAC address of the device (i.e. MAC spoofing).")
+ #define DESCRIBE_DOC_NM_SETTING_INFINIBAND_MTU N_("If non-zero, only transmit packets of the specified size or smaller, breaking larger packets up into multiple frames.")
+-#define DESCRIBE_DOC_NM_SETTING_INFINIBAND_P_KEY N_("The InfiniBand P_Key to use for this device. A value of -1 means to use the default P_Key (aka \"the P_Key at index 0\"). Otherwise, it is a 16-bit unsigned integer, whose high bit 0x8000 is set if it is a \"full membership\" P_Key. The values 0 and 0x8000 are not allowed. With the p-key set, the interface name is always \"$parent.$p_key\". Setting \"connection.interface-name\" to another name is not supported. Note that kernel will internally always set the full membership bit, although the interface name does not reflect that. Thus, not setting the high bit is probably not useful. If the profile is stored in ifcfg-rh format, then the full membership bit is automatically added. To get consistent behavior, it is best to only use p-key values with the full membership bit set.")
++#define DESCRIBE_DOC_NM_SETTING_INFINIBAND_P_KEY N_("The InfiniBand p-key to use for this device. A value of -1 means to use the default p-key (aka \"the p-key at index 0\"). Otherwise, it is a 16-bit unsigned integer, whose high bit 0x8000 is set if it is a \"full membership\" p-key. The values 0 and 0x8000 are not allowed. With the p-key set, the interface name is always \"$parent.$p_key\". Setting \"connection.interface-name\" to another name is not supported. Note that kernel will internally always set the full membership bit, although the interface name does not reflect that. Usually the user would want to configure a full membership p-key with 0x8000 flag set.")
+ #define DESCRIBE_DOC_NM_SETTING_INFINIBAND_PARENT N_("The interface name of the parent device of this device. Normally NULL, but if the \"p_key\" property is set, then you must specify the base device by setting either this property or \"mac-address\".")
+ #define DESCRIBE_DOC_NM_SETTING_INFINIBAND_TRANSPORT_MODE N_("The IP-over-InfiniBand transport mode. Either \"datagram\" or \"connected\".")
+ #define DESCRIBE_DOC_NM_SETTING_IP4_CONFIG_ADDRESSES N_("A list of IPv4 addresses and their prefix length. Multiple addresses can be separated by comma. For example \"192.168.1.5/24, 10.1.0.5/24\". The addresses are listed in decreasing priority, meaning the first address will be the primary address.")
+diff --git a/src/nmcli/generate-docs-nm-settings-nmcli.xml.in b/src/nmcli/generate-docs-nm-settings-nmcli.xml.in
+index a59dacf2430d..373d39a60b9d 100644
+--- a/src/nmcli/generate-docs-nm-settings-nmcli.xml.in
++++ b/src/nmcli/generate-docs-nm-settings-nmcli.xml.in
+@@ -614,7 +614,7 @@
+                   description="The IP-over-InfiniBand transport mode. Either &quot;datagram&quot; or &quot;connected&quot;." />
+         <property name="p-key"
+                   alias="p-key"
+-                  description="The InfiniBand P_Key to use for this device. A value of -1 means to use the default P_Key (aka &quot;the P_Key at index 0&quot;). Otherwise, it is a 16-bit unsigned integer, whose high bit 0x8000 is set if it is a &quot;full membership&quot; P_Key. The values 0 and 0x8000 are not allowed. With the p-key set, the interface name is always &quot;$parent.$p_key&quot;. Setting &quot;connection.interface-name&quot; to another name is not supported. Note that kernel will internally always set the full membership bit, although the interface name does not reflect that. Thus, not setting the high bit is probably not useful. If the profile is stored in ifcfg-rh format, then the full membership bit is automatically added. To get consistent behavior, it is best to only use p-key values with the full membership bit set." />
++                  description="The InfiniBand p-key to use for this device. A value of -1 means to use the default p-key (aka &quot;the p-key at index 0&quot;). Otherwise, it is a 16-bit unsigned integer, whose high bit 0x8000 is set if it is a &quot;full membership&quot; p-key. The values 0 and 0x8000 are not allowed. With the p-key set, the interface name is always &quot;$parent.$p_key&quot;. Setting &quot;connection.interface-name&quot; to another name is not supported. Note that kernel will internally always set the full membership bit, although the interface name does not reflect that. Usually the user would want to configure a full membership p-key with 0x8000 flag set." />
+         <property name="parent"
+                   alias="parent"
+                   description="The interface name of the parent device of this device. Normally NULL, but if the &quot;p_key&quot; property is set, then you must specify the base device by setting either this property or &quot;mac-address&quot;." />
+-- 
+2.40.1
+

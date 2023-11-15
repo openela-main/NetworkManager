@@ -1,0 +1,1531 @@
+From 334096f5e0cc7c210c6ddb730d0eb983ed08a48c Mon Sep 17 00:00:00 2001
+From: Fernando Fernandez Mancera <ffmancera@riseup.net>
+Date: Fri, 17 Mar 2023 15:59:27 +0100
+Subject: [PATCH 1/8] libnm: fix ifcfg variable documentation at queue-id
+ property
+
+The correct variable for queue-id in ifcfg is BOND_PORT_QUEUE_ID.
+
+(cherry picked from commit 762cd06ffa4ff56b096128c26c931843429dc8c5)
+(cherry picked from commit 87316737f36202902df76e5da6ba130e7bec4dfe)
+(cherry picked from commit 40c523cd78ff322954f7b696afee8baee37da810)
+---
+ src/libnm-core-impl/nm-setting-bond-port.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/libnm-core-impl/nm-setting-bond-port.c b/src/libnm-core-impl/nm-setting-bond-port.c
+index 7ea82a763e..d1656a31ac 100644
+--- a/src/libnm-core-impl/nm-setting-bond-port.c
++++ b/src/libnm-core-impl/nm-setting-bond-port.c
+@@ -148,7 +148,7 @@ nm_setting_bond_port_class_init(NMSettingBondPortClass *klass)
+      **/
+     /* ---ifcfg-rh---
+      * property: queue-id
+-     * variable: BONDING_OPTS: queue-id=
++     * variable: BOND_PORT_QUEUE_ID(+)
+      * values: 0 - 65535
+      * default: 0
+      * description: Queue ID.
+-- 
+2.40.1
+
+
+From 495f3f1918bcde6105b74482613c51fd3b9185b0 Mon Sep 17 00:00:00 2001
+From: Beniamino Galvani <bgalvani@redhat.com>
+Date: Mon, 27 Feb 2023 10:55:29 +0100
+Subject: [PATCH 2/8] platform: rename link_change() to link_change_extra()
+
+There are many functions to replace properties of a link
+(link_set_address, link_set_mtu, link_set_name, link_change,
+etc.). Eventually, they will be replaced by a function that does
+everything and removes all the code duplication.
+
+That function will be named link_change(); rename the current
+link_change() to link_change_extra().
+
+(cherry picked from commit babe2bacd3e23e03d5066b82ac0bb57c60b9db6f)
+(cherry picked from commit 9ae85f6541505300ac811dff4671fe56a6d11ab7)
+(cherry picked from commit 0a158141d3423173df0ba6983caed5d3aea8a9c8)
+---
+ src/libnm-platform/nm-linux-platform.c |  8 ++++----
+ src/libnm-platform/nm-platform.c       |  7 +++++--
+ src/libnm-platform/nm-platform.h       | 17 ++++++++++-------
+ 3 files changed, 19 insertions(+), 13 deletions(-)
+
+diff --git a/src/libnm-platform/nm-linux-platform.c b/src/libnm-platform/nm-linux-platform.c
+index b798d12d2a..527d509498 100644
+--- a/src/libnm-platform/nm-linux-platform.c
++++ b/src/libnm-platform/nm-linux-platform.c
+@@ -7984,7 +7984,7 @@ out:
+ }
+ 
+ static int
+-link_change(NMPlatform *platform, NMLinkType type, int ifindex, gconstpointer extra_data)
++link_change_extra(NMPlatform *platform, NMLinkType type, int ifindex, gconstpointer extra_data)
+ {
+     nm_auto_nlmsg struct nl_msg *nlmsg = NULL;
+ 
+@@ -10824,9 +10824,9 @@ nm_linux_platform_class_init(NMLinuxPlatformClass *klass)
+     platform_class->sysctl_set_async = sysctl_set_async;
+     platform_class->sysctl_get       = sysctl_get;
+ 
+-    platform_class->link_add    = link_add;
+-    platform_class->link_change = link_change;
+-    platform_class->link_delete = link_delete;
++    platform_class->link_add          = link_add;
++    platform_class->link_change_extra = link_change_extra;
++    platform_class->link_delete       = link_delete;
+ 
+     platform_class->link_refresh = link_refresh;
+ 
+diff --git a/src/libnm-platform/nm-platform.c b/src/libnm-platform/nm-platform.c
+index 198e5f0afb..ab98491b45 100644
+--- a/src/libnm-platform/nm-platform.c
++++ b/src/libnm-platform/nm-platform.c
+@@ -1388,7 +1388,10 @@ nm_platform_link_add(NMPlatform            *self,
+ }
+ 
+ int
+-nm_platform_link_change(NMPlatform *self, NMLinkType type, int ifindex, gconstpointer extra_data)
++nm_platform_link_change_extra(NMPlatform   *self,
++                              NMLinkType    type,
++                              int           ifindex,
++                              gconstpointer extra_data)
+ {
+     char        buf[512];
+     const char *name = nm_platform_link_get_name(self, ifindex);
+@@ -1429,7 +1432,7 @@ nm_platform_link_change(NMPlatform *self, NMLinkType type, int ifindex, gconstpo
+                buf;
+            }));
+ 
+-    return klass->link_change(self, type, ifindex, extra_data);
++    return klass->link_change_extra(self, type, ifindex, extra_data);
+ }
+ 
+ /**
+diff --git a/src/libnm-platform/nm-platform.h b/src/libnm-platform/nm-platform.h
+index 30d0b5067c..d87eba3a63 100644
+--- a/src/libnm-platform/nm-platform.h
++++ b/src/libnm-platform/nm-platform.h
+@@ -1222,9 +1222,10 @@ typedef struct {
+                     guint32                mtu,
+                     gconstpointer          extra_data,
+                     const NMPlatformLink **out_link);
+-
+-    int (*link_change)(NMPlatform *self, NMLinkType type, int ifindex, gconstpointer extra_data);
+-
++    int (*link_change_extra)(NMPlatform   *self,
++                             NMLinkType    type,
++                             int           ifindex,
++                             gconstpointer extra_data);
+     gboolean (*link_delete)(NMPlatform *self, int ifindex);
+     gboolean (*link_refresh)(NMPlatform *self, int ifindex);
+     gboolean (*link_set_netns)(NMPlatform *self, int ifindex, int netns_fd);
+@@ -1749,8 +1750,10 @@ int nm_platform_link_add(NMPlatform            *self,
+                          gconstpointer          extra_data,
+                          const NMPlatformLink **out_link);
+ 
+-int
+-nm_platform_link_change(NMPlatform *self, NMLinkType type, int ifindex, gconstpointer extra_data);
++int nm_platform_link_change_extra(NMPlatform   *self,
++                                  NMLinkType    type,
++                                  int           ifindex,
++                                  gconstpointer extra_data);
+ 
+ static inline int
+ nm_platform_link_veth_add(NMPlatform            *self,
+@@ -1790,13 +1793,13 @@ nm_platform_link_bridge_add(NMPlatform                *self,
+ static inline int
+ nm_platform_link_bridge_change(NMPlatform *self, int ifindex, const NMPlatformLnkBridge *props)
+ {
+-    return nm_platform_link_change(self, NM_LINK_TYPE_BRIDGE, ifindex, props);
++    return nm_platform_link_change_extra(self, NM_LINK_TYPE_BRIDGE, ifindex, props);
+ }
+ 
+ static inline int
+ nm_platform_link_bond_change(NMPlatform *self, int ifindex, const NMPlatformLnkBond *props)
+ {
+-    return nm_platform_link_change(self, NM_LINK_TYPE_BOND, ifindex, props);
++    return nm_platform_link_change_extra(self, NM_LINK_TYPE_BOND, ifindex, props);
+ }
+ 
+ static inline int
+-- 
+2.40.1
+
+
+From b58c3ee56f67c6e6e1e4fe0358d95df57537e6b0 Mon Sep 17 00:00:00 2001
+From: Lubomir Rintel <lkundrak@v3.sk>
+Date: Fri, 30 Sep 2022 22:40:03 +0200
+Subject: [PATCH 3/8] bond,bridge,team: use uuid for con.master when generating
+ connection
+
+If we're generating a connection for an externally configured slave,
+refer the master by the UUID instead of the device name.
+
+This doesn't matter most of the time. However, on a checkpoint restore
+we need to make sure that a connection that is unambiguously the original
+master is up.
+
+Otherwise it could happen that a different connection was activated on the
+same master device and the slaves being restored don't agree on which master
+connection to bring up.
+
+I can't think of any thing that would rely on this but I've been wrong
+about more serious things before.
+
+Fixes-test: @libnm_snapshot_reattach_unmanaged_ports_to_bridge
+
+https://bugzilla.redhat.com/show_bug.cgi?id=2125615
+(cherry picked from commit dc254f90e2b306700a0b81f7194e9b0438c62f4c)
+(cherry picked from commit 836d7511e8b7d9660b18ee9876c635b8512f6966)
+---
+ src/core/devices/nm-device-bond.c      | 9 +++++----
+ src/core/devices/nm-device-bridge.c    | 9 +++++----
+ src/core/devices/team/nm-device-team.c | 9 +++++----
+ 3 files changed, 15 insertions(+), 12 deletions(-)
+
+diff --git a/src/core/devices/nm-device-bond.c b/src/core/devices/nm-device-bond.c
+index 10765b609c..9556c57321 100644
+--- a/src/core/devices/nm-device-bond.c
++++ b/src/core/devices/nm-device-bond.c
+@@ -224,9 +224,10 @@ controller_update_port_connection(NMDevice     *self,
+                                   GError      **error)
+ {
+     NMSettingBondPort *s_port;
+-    int                ifindex_port = nm_device_get_ifindex(port);
+-    uint               queue_id     = NM_BOND_PORT_QUEUE_ID_DEF;
+-    gs_free char      *queue_id_str = NULL;
++    int                ifindex_port       = nm_device_get_ifindex(port);
++    NMConnection      *applied_connection = nm_device_get_applied_connection(self);
++    uint               queue_id           = NM_BOND_PORT_QUEUE_ID_DEF;
++    gs_free char      *queue_id_str       = NULL;
+ 
+     g_return_val_if_fail(ifindex_port > 0, FALSE);
+ 
+@@ -243,7 +244,7 @@ controller_update_port_connection(NMDevice     *self,
+ 
+     g_object_set(nm_connection_get_setting_connection(connection),
+                  NM_SETTING_CONNECTION_MASTER,
+-                 nm_device_get_iface(self),
++                 nm_connection_get_uuid(applied_connection),
+                  NM_SETTING_CONNECTION_SLAVE_TYPE,
+                  NM_SETTING_BOND_SETTING_NAME,
+                  NULL);
+diff --git a/src/core/devices/nm-device-bridge.c b/src/core/devices/nm-device-bridge.c
+index 31cf361e8e..d8f1337058 100644
+--- a/src/core/devices/nm-device-bridge.c
++++ b/src/core/devices/nm-device-bridge.c
+@@ -679,9 +679,10 @@ master_update_slave_connection(NMDevice     *device,
+     NMDeviceBridge      *self = NM_DEVICE_BRIDGE(device);
+     NMSettingConnection *s_con;
+     NMSettingBridgePort *s_port;
+-    int                  ifindex_slave = nm_device_get_ifindex(slave);
+-    const char          *iface         = nm_device_get_iface(device);
+-    const Option        *option;
++    int                  ifindex_slave      = nm_device_get_ifindex(slave);
++    NMConnection        *applied_connection = nm_device_get_applied_connection(device);
++
++    const Option *option;
+ 
+     g_return_val_if_fail(ifindex_slave > 0, FALSE);
+ 
+@@ -717,7 +718,7 @@ master_update_slave_connection(NMDevice     *device,
+ 
+     g_object_set(s_con,
+                  NM_SETTING_CONNECTION_MASTER,
+-                 iface,
++                 nm_connection_get_uuid(applied_connection),
+                  NM_SETTING_CONNECTION_SLAVE_TYPE,
+                  NM_SETTING_BRIDGE_SETTING_NAME,
+                  NULL);
+diff --git a/src/core/devices/team/nm-device-team.c b/src/core/devices/team/nm-device-team.c
+index 9eca008a10..b745158ef8 100644
+--- a/src/core/devices/team/nm-device-team.c
++++ b/src/core/devices/team/nm-device-team.c
+@@ -258,9 +258,10 @@ master_update_slave_connection(NMDevice     *device,
+     gs_free_error GError *connect_error = NULL;
+     int                   err           = 0;
+     struct teamdctl      *tdc;
+-    const char           *team_port_config = NULL;
+-    const char           *iface            = nm_device_get_iface(device);
+-    const char           *iface_slave      = nm_device_get_iface(slave);
++    const char           *team_port_config   = NULL;
++    const char           *iface              = nm_device_get_iface(device);
++    const char           *iface_slave        = nm_device_get_iface(slave);
++    NMConnection         *applied_connection = nm_device_get_applied_connection(device);
+ 
+     tdc = _tdc_connect_new(self, iface, &connect_error);
+     if (!tdc) {
+@@ -299,7 +300,7 @@ master_update_slave_connection(NMDevice     *device,
+ 
+     g_object_set(nm_connection_get_setting_connection(connection),
+                  NM_SETTING_CONNECTION_MASTER,
+-                 iface,
++                 nm_connection_get_uuid(applied_connection),
+                  NM_SETTING_CONNECTION_SLAVE_TYPE,
+                  NM_SETTING_TEAM_SETTING_NAME,
+                  NULL);
+-- 
+2.40.1
+
+
+From 8a02a950e1e23f584e5f3750ceb8a69efd7b3328 Mon Sep 17 00:00:00 2001
+From: Fernando Fernandez Mancera <ffmancera@riseup.net>
+Date: Fri, 3 Mar 2023 16:36:23 +0100
+Subject: [PATCH 4/8] platform: add netlink support for bond port options
+
+sysfs is deprecated and kernel will not add new bond port options to
+sysfs. Netlink is a stable API and therefore is the right method to
+communicate with kernel in order to set the link options.
+
+(cherry picked from commit bb435674b56e876084d4c31138ea95cb3174759f)
+(cherry picked from commit 1bce7f0dec6c558fff8c6689d79cb7839eb925fe)
+(cherry picked from commit ee592c02dd42ccf6bd45b8927716df5715fa45f8)
+---
+ src/core/devices/nm-device-bond.c      | 42 ++++--------
+ src/core/platform/nm-fake-platform.c   | 24 +++++++
+ src/core/platform/tests/test-link.c    | 15 +++++
+ src/libnm-glib-aux/nm-shared-utils.h   |  8 +++
+ src/libnm-platform/nm-linux-platform.c | 79 +++++++++++++++++++++-
+ src/libnm-platform/nm-platform.c       | 90 ++++++++++++++++++++++++++
+ src/libnm-platform/nm-platform.h       | 25 +++++++
+ 7 files changed, 250 insertions(+), 33 deletions(-)
+
+diff --git a/src/core/devices/nm-device-bond.c b/src/core/devices/nm-device-bond.c
+index 9556c57321..0485689d10 100644
+--- a/src/core/devices/nm-device-bond.c
++++ b/src/core/devices/nm-device-bond.c
+@@ -223,24 +223,18 @@ controller_update_port_connection(NMDevice     *self,
+                                   NMConnection *connection,
+                                   GError      **error)
+ {
+-    NMSettingBondPort *s_port;
+-    int                ifindex_port       = nm_device_get_ifindex(port);
+-    NMConnection      *applied_connection = nm_device_get_applied_connection(self);
+-    uint               queue_id           = NM_BOND_PORT_QUEUE_ID_DEF;
+-    gs_free char      *queue_id_str       = NULL;
++    NMSettingBondPort    *s_port;
++    int                   ifindex_port       = nm_device_get_ifindex(port);
++    NMConnection         *applied_connection = nm_device_get_applied_connection(self);
++    const NMPlatformLink *pllink;
+ 
+     g_return_val_if_fail(ifindex_port > 0, FALSE);
+ 
+     s_port = _nm_connection_ensure_setting(connection, NM_TYPE_SETTING_BOND_PORT);
++    pllink = nm_platform_link_get(nm_device_get_platform(port), ifindex_port);
+ 
+-    queue_id_str =
+-        nm_platform_sysctl_slave_get_option(nm_device_get_platform(self), ifindex_port, "queue_id");
+-    if (queue_id_str) {
+-        queue_id =
+-            _nm_utils_ascii_str_to_int64(queue_id_str, 10, 0, 65535, NM_BOND_PORT_QUEUE_ID_DEF);
+-        g_object_set(s_port, NM_SETTING_BOND_PORT_QUEUE_ID, queue_id, NULL);
+-    } else
+-        _LOGW(LOGD_BOND, "failed to read bond port setting '%s'", NM_SETTING_BOND_PORT_QUEUE_ID);
++    if (pllink && pllink->port_kind == NM_PORT_KIND_BOND)
++        g_object_set(s_port, NM_SETTING_BOND_PORT_QUEUE_ID, pllink->port_data.bond.queue_id, NULL);
+ 
+     g_object_set(nm_connection_get_setting_connection(connection),
+                  NM_SETTING_CONNECTION_MASTER,
+@@ -501,23 +495,11 @@ act_stage1_prepare(NMDevice *device, NMDeviceStateReason *out_failure_reason)
+ static void
+ commit_port_options(NMDevice *bond_device, NMDevice *port, NMSettingBondPort *s_port)
+ {
+-    char queue_id_str[IFNAMSIZ + NM_STRLEN(":") + 5 + 100];
+-
+-    /*
+-     * The queue-id of bond port is read only, we should modify bond interface using:
+-     *    echo "eth1:2" > /sys/class/net/bond0/bonding/queue_id
+-     * Kernel allows parital editing, so no need to care about other bond ports.
+-     */
+-    g_snprintf(queue_id_str,
+-               sizeof(queue_id_str),
+-               "%s:%" G_GUINT32_FORMAT,
+-               nm_device_get_iface(port),
+-               s_port ? nm_setting_bond_port_get_queue_id(s_port) : NM_BOND_PORT_QUEUE_ID_DEF);
+-
+-    nm_platform_sysctl_master_set_option(nm_device_get_platform(bond_device),
+-                                         nm_device_get_ifindex(bond_device),
+-                                         "queue_id",
+-                                         queue_id_str);
++    nm_platform_link_change(
++        nm_device_get_platform(port),
++        nm_device_get_ifindex(port),
++        &((NMPlatformLinkBondPort){.queue_id = s_port ? nm_setting_bond_port_get_queue_id(s_port)
++                                                      : NM_BOND_PORT_QUEUE_ID_DEF}));
+ }
+ 
+ static NMTernary
+diff --git a/src/core/platform/nm-fake-platform.c b/src/core/platform/nm-fake-platform.c
+index a1ca5434cb..c39c45e586 100644
+--- a/src/core/platform/nm-fake-platform.c
++++ b/src/core/platform/nm-fake-platform.c
+@@ -667,6 +667,29 @@ link_supports_sriov(NMPlatform *platform, int ifindex)
+     }
+ }
+ 
++static gboolean
++link_change(NMPlatform                   *platform,
++            int                           ifindex,
++            NMPortKind                    port_kind,
++            const NMPlatformLinkPortData *port_data)
++{
++    NMFakePlatformLink       *device  = link_get(platform, ifindex);
++    nm_auto_nmpobj NMPObject *obj_tmp = NULL;
++
++    switch (port_kind) {
++    case NM_PORT_KIND_BOND:
++        obj_tmp                               = nmp_object_clone(device->obj, FALSE);
++        obj_tmp->link.port_kind               = NM_PORT_KIND_BOND;
++        obj_tmp->link.port_data.bond.queue_id = port_data->bond.queue_id;
++        link_set_obj(platform, device, obj_tmp);
++        return TRUE;
++    case NM_PORT_KIND_NONE:
++        return TRUE;
++    }
++
++    return nm_assert_unreachable_val(TRUE);
++}
++
+ static gboolean
+ link_enslave(NMPlatform *platform, int master, int slave)
+ {
+@@ -1322,6 +1345,7 @@ nm_fake_platform_class_init(NMFakePlatformClass *klass)
+     platform_class->link_set_address = link_set_address;
+     platform_class->link_set_mtu     = link_set_mtu;
+ 
++    platform_class->link_change       = link_change;
+     platform_class->link_change_flags = link_change_flags;
+ 
+     platform_class->link_get_driver_info = link_get_driver_info;
+diff --git a/src/core/platform/tests/test-link.c b/src/core/platform/tests/test-link.c
+index b72bcb65b2..bdbfbea34f 100644
+--- a/src/core/platform/tests/test-link.c
++++ b/src/core/platform/tests/test-link.c
+@@ -257,6 +257,21 @@ test_slave(int master, int type, SignalData *master_changed)
+     else
+         g_assert(!nm_platform_link_is_up(NM_PLATFORM_GET, ifindex));
+ 
++    if (NM_IN_SET(link_type, NM_LINK_TYPE_BOND)) {
++        const NMPlatformLink  *link;
++        NMPlatformLinkBondPort bond_port;
++
++        bond_port = (NMPlatformLinkBondPort){
++            .queue_id = 5,
++        };
++        g_assert(nm_platform_link_change(NM_PLATFORM_GET, ifindex, &bond_port));
++        accept_signals(link_changed, 1, 3);
++
++        link = nmtstp_link_get(NM_PLATFORM_GET, ifindex, SLAVE_NAME);
++        g_assert(link);
++        g_assert_cmpint(link->port_data.bond.queue_id, ==, 5);
++    }
++
+     test_link_changed_signal_arg1 = FALSE;
+     test_link_changed_signal_arg2 = FALSE;
+     g_signal_connect(NM_PLATFORM_GET,
+diff --git a/src/libnm-glib-aux/nm-shared-utils.h b/src/libnm-glib-aux/nm-shared-utils.h
+index 53cf7f3e57..b6cbf95504 100644
+--- a/src/libnm-glib-aux/nm-shared-utils.h
++++ b/src/libnm-glib-aux/nm-shared-utils.h
+@@ -93,6 +93,14 @@ G_STATIC_ASSERT(sizeof(int) == sizeof(gint32));
+ 
+ /*****************************************************************************/
+ 
++typedef enum _nm_packed {
++    /* No type, empty value */
++    NM_PORT_KIND_NONE,
++    NM_PORT_KIND_BOND,
++} NMPortKind;
++
++/*****************************************************************************/
++
+ typedef enum {
+ 
+     /* No type, used as error value */
+diff --git a/src/libnm-platform/nm-linux-platform.c b/src/libnm-platform/nm-linux-platform.c
+index 527d509498..8158f364d2 100644
+--- a/src/libnm-platform/nm-linux-platform.c
++++ b/src/libnm-platform/nm-linux-platform.c
+@@ -3241,9 +3241,11 @@ _new_from_nl_link(NMPlatform            *platform,
+ 
+     if (tb[IFLA_LINKINFO]) {
+         static const struct nla_policy policy_link_info[] = {
+-            [IFLA_INFO_KIND]   = {.type = NLA_STRING},
+-            [IFLA_INFO_DATA]   = {.type = NLA_NESTED},
+-            [IFLA_INFO_XSTATS] = {.type = NLA_NESTED},
++            [IFLA_INFO_KIND]       = {.type = NLA_STRING},
++            [IFLA_INFO_DATA]       = {.type = NLA_NESTED},
++            [IFLA_INFO_XSTATS]     = {.type = NLA_NESTED},
++            [IFLA_INFO_SLAVE_KIND] = {.type = NLA_STRING},
++            [IFLA_INFO_SLAVE_DATA] = {.type = NLA_NESTED},
+         };
+         struct nlattr *li[G_N_ELEMENTS(policy_link_info)];
+ 
+@@ -3254,6 +3256,33 @@ _new_from_nl_link(NMPlatform            *platform,
+             nl_info_kind = nla_get_string(li[IFLA_INFO_KIND]);
+ 
+         nl_info_data = li[IFLA_INFO_DATA];
++
++        if (li[IFLA_INFO_SLAVE_KIND]) {
++            const char *s = nla_get_string(li[IFLA_INFO_SLAVE_KIND]);
++
++            if (nm_streq(s, "bond"))
++                obj->link.port_kind = NM_PORT_KIND_BOND;
++        }
++
++        if (li[IFLA_INFO_SLAVE_DATA]) {
++            static const struct nla_policy policy_bond_port[] = {
++                [IFLA_BOND_SLAVE_QUEUE_ID] = {.type = NLA_U16},
++            };
++            struct nlattr *bp[G_N_ELEMENTS(policy_bond_port)];
++
++            switch (obj->link.port_kind) {
++            case NM_PORT_KIND_BOND:
++                if (nla_parse_nested_arr(bp, li[IFLA_INFO_SLAVE_DATA], policy_bond_port) < 0)
++                    return NULL;
++
++                if (bp[IFLA_BOND_SLAVE_QUEUE_ID])
++                    obj->link.port_data.bond.queue_id = nla_get_u16(bp[IFLA_BOND_SLAVE_QUEUE_ID]);
++
++                break;
++            case NM_PORT_KIND_NONE:
++                break;
++            }
++        }
+     }
+ 
+     if (tb[IFLA_STATS64]) {
+@@ -8061,6 +8090,48 @@ link_delete(NMPlatform *platform, int ifindex)
+     return do_delete_object(platform, &obj_id, nlmsg);
+ }
+ 
++static gboolean
++link_change(NMPlatform                   *platform,
++            int                           ifindex,
++            NMPortKind                    port_kind,
++            const NMPlatformLinkPortData *port_data)
++{
++    nm_auto_nlmsg struct nl_msg *nlmsg = NULL;
++    struct nlattr               *nl_info;
++    struct nlattr               *nl_port_data;
++
++    nlmsg = _nl_msg_new_link(RTM_NEWLINK, 0, ifindex, NULL);
++    if (!nlmsg)
++        return FALSE;
++
++    switch (port_kind) {
++    case NM_PORT_KIND_BOND:
++
++        nm_assert(port_data);
++
++        if (!(nl_info = nla_nest_start(nlmsg, IFLA_LINKINFO)))
++            goto nla_put_failure;
++
++        nm_assert(nm_streq0("bond", nm_link_type_to_rtnl_type_string(NM_LINK_TYPE_BOND)));
++        NLA_PUT_STRING(nlmsg, IFLA_INFO_SLAVE_KIND, "bond");
++
++        if (!(nl_port_data = nla_nest_start(nlmsg, IFLA_INFO_SLAVE_DATA)))
++            goto nla_put_failure;
++
++        NLA_PUT_U16(nlmsg, IFLA_BOND_SLAVE_QUEUE_ID, port_data->bond.queue_id);
++
++        nla_nest_end(nlmsg, nl_port_data);
++        nla_nest_end(nlmsg, nl_info);
++        break;
++    case NM_PORT_KIND_NONE:
++        break;
++    }
++
++    return do_change_link(platform, CHANGE_LINK_TYPE_UNSPEC, ifindex, nlmsg, NULL) == 0;
++nla_put_failure:
++    g_return_val_if_reached(FALSE);
++}
++
+ static gboolean
+ link_refresh(NMPlatform *platform, int ifindex)
+ {
+@@ -10828,6 +10899,8 @@ nm_linux_platform_class_init(NMLinuxPlatformClass *klass)
+     platform_class->link_change_extra = link_change_extra;
+     platform_class->link_delete       = link_delete;
+ 
++    platform_class->link_change = link_change;
++
+     platform_class->link_refresh = link_refresh;
+ 
+     platform_class->link_set_netns = link_set_netns;
+diff --git a/src/libnm-platform/nm-platform.c b/src/libnm-platform/nm-platform.c
+index ab98491b45..01568243a3 100644
+--- a/src/libnm-platform/nm-platform.c
++++ b/src/libnm-platform/nm-platform.c
+@@ -61,6 +61,31 @@ G_STATIC_ASSERT(sizeof(((NMPlatformLink *) NULL)->l_address.data) == _NM_UTILS_H
+ G_STATIC_ASSERT(sizeof(((NMPlatformLink *) NULL)->l_perm_address.data) == _NM_UTILS_HWADDR_LEN_MAX);
+ G_STATIC_ASSERT(sizeof(((NMPlatformLink *) NULL)->l_broadcast.data) == _NM_UTILS_HWADDR_LEN_MAX);
+ 
++static const char *
++_nmp_link_port_data_to_string(NMPortKind                    port_kind,
++                              const NMPlatformLinkPortData *port_data,
++                              char                         *sbuf,
++                              gsize                         sbuf_len)
++{
++    const char *sbuf0 = sbuf;
++
++    nm_assert(port_data);
++
++    switch (port_kind) {
++    case NM_PORT_KIND_NONE:
++        nm_strbuf_append_c(&sbuf, &sbuf_len, '\0');
++        goto out;
++    case NM_PORT_KIND_BOND:
++        nm_strbuf_append(&sbuf, &sbuf_len, "port bond queue-id %u", port_data->bond.queue_id);
++        goto out;
++    }
++
++    nm_strbuf_append(&sbuf, &sbuf_len, "invalid-port-type %d", (int) port_kind);
++
++out:
++    return sbuf0;
++}
++
+ static const char *
+ _nmp_link_address_to_string(const NMPLinkAddress *addr,
+                             char                  buf[static(_NM_UTILS_HWADDR_LEN_MAX * 3)])
+@@ -2092,6 +2117,31 @@ nm_platform_link_set_name(NMPlatform *self, int ifindex, const char *name)
+     return klass->link_set_name(self, ifindex, name);
+ }
+ 
++gboolean
++nm_platform_link_change(NMPlatform *self, int ifindex, NMPlatformLinkBondPort *bond_port)
++{
++    _CHECK_SELF(self, klass, FALSE);
++
++    g_return_val_if_fail(ifindex >= 0, FALSE);
++
++    if (_LOGD_ENABLED()) {
++        nm_auto_free_gstring GString *str = g_string_new("");
++
++        if (bond_port)
++            g_string_append_printf(str, "bond-port queue-id %d", bond_port->queue_id);
++
++        if (str->len > 0 && str->str[str->len - 1] == ' ')
++            g_string_truncate(str, str->len - 1);
++
++        _LOG3D("link: change: %s", str->str);
++    }
++
++    return klass->link_change(self,
++                              ifindex,
++                              bond_port ? NM_PORT_KIND_BOND : NM_PORT_KIND_NONE,
++                              (const NMPlatformLinkPortData *) bond_port);
++}
++
+ /**
+  * nm_platform_link_get_physical_port_id:
+  * @self: platform instance
+@@ -5893,6 +5943,7 @@ nm_platform_link_to_string(const NMPlatformLink *link, char *buf, gsize len)
+     char       *s;
+     gsize       l;
+     char        str_addrmode[30];
++    char        str_port_data[200];
+     char        str_address[_NM_UTILS_HWADDR_LEN_MAX * 3];
+     char        str_perm_address[_NM_UTILS_HWADDR_LEN_MAX * 3];
+     char        str_broadcast[_NM_UTILS_HWADDR_LEN_MAX * 3];
+@@ -5936,6 +5987,11 @@ nm_platform_link_to_string(const NMPlatformLink *link, char *buf, gsize len)
+     _nmp_link_address_to_string(&link->l_perm_address, str_perm_address);
+     _nmp_link_address_to_string(&link->l_broadcast, str_broadcast);
+ 
++    _nmp_link_port_data_to_string(link->port_kind,
++                                  &link->port_data,
++                                  str_port_data,
++                                  sizeof(str_port_data));
++
+     str_link_type = nm_link_type_to_string(link->type);
+ 
+     g_snprintf(
+@@ -5957,6 +6013,7 @@ nm_platform_link_to_string(const NMPlatformLink *link, char *buf, gsize len)
+         "%s%s"    /* l_broadcast */
+         "%s%s"    /* inet6_token */
+         "%s%s"    /* driver */
++        "%s%s"    /* port_data */
+         " rx:%" G_GUINT64_FORMAT ",%" G_GUINT64_FORMAT " tx:%" G_GUINT64_FORMAT
+         ",%" G_GUINT64_FORMAT,
+         link->ifindex,
+@@ -5989,6 +6046,7 @@ nm_platform_link_to_string(const NMPlatformLink *link, char *buf, gsize len)
+             : "",
+         link->driver ? " driver " : "",
+         link->driver ?: "",
++        NM_PRINT_FMT_QUOTED2(str_port_data[0] != '\0', " ", str_port_data, ""),
+         link->rx_packets,
+         link->rx_bytes,
+         link->tx_packets,
+@@ -7927,6 +7985,7 @@ nm_platform_link_hash_update(const NMPlatformLink *obj, NMHashState *h)
+                         obj->arptype,
+                         obj->inet6_addr_gen_mode_inv,
+                         obj->inet6_token,
++                        obj->port_kind,
+                         obj->rx_packets,
+                         obj->rx_bytes,
+                         obj->tx_packets,
+@@ -7945,6 +8004,20 @@ nm_platform_link_hash_update(const NMPlatformLink *obj, NMHashState *h)
+     nm_hash_update_mem(h,
+                        obj->l_broadcast.data,
+                        NM_MIN(obj->l_broadcast.len, sizeof(obj->l_broadcast.data)));
++
++    switch (obj->port_kind) {
++    case NM_PORT_KIND_NONE:
++        break;
++    case NM_PORT_KIND_BOND:
++        nm_platform_link_bond_port_hash_update(&obj->port_data.bond, h);
++        break;
++    }
++}
++
++void
++nm_platform_link_bond_port_hash_update(const NMPlatformLinkBondPort *obj, NMHashState *h)
++{
++    nm_hash_update_vals(h, obj->queue_id);
+ }
+ 
+ int
+@@ -7974,6 +8047,14 @@ nm_platform_link_cmp(const NMPlatformLink *a, const NMPlatformLink *b)
+     if (a->l_broadcast.len)
+         NM_CMP_FIELD_MEMCMP_LEN(a, b, l_broadcast.data, a->l_broadcast.len);
+     NM_CMP_FIELD_MEMCMP(a, b, inet6_token);
++    NM_CMP_FIELD(a, b, port_kind);
++    switch (a->port_kind) {
++    case NM_PORT_KIND_NONE:
++        break;
++    case NM_PORT_KIND_BOND:
++        NM_CMP_RETURN(nm_platform_link_bond_port_cmp(&a->port_data.bond, &b->port_data.bond));
++        break;
++    }
+     NM_CMP_FIELD(a, b, rx_packets);
+     NM_CMP_FIELD(a, b, rx_bytes);
+     NM_CMP_FIELD(a, b, tx_packets);
+@@ -8053,6 +8134,15 @@ nm_platform_lnk_bond_hash_update(const NMPlatformLnkBond *obj, NMHashState *h)
+     nm_hash_update(h, obj->arp_ip_target, obj->arp_ip_targets_num * sizeof(obj->arp_ip_target[0]));
+ }
+ 
++int
++nm_platform_link_bond_port_cmp(const NMPlatformLinkBondPort *a, const NMPlatformLinkBondPort *b)
++{
++    NM_CMP_SELF(a, b);
++    NM_CMP_FIELD(a, b, queue_id);
++
++    return 0;
++}
++
+ int
+ nm_platform_lnk_bond_cmp(const NMPlatformLnkBond *a, const NMPlatformLnkBond *b)
+ {
+diff --git a/src/libnm-platform/nm-platform.h b/src/libnm-platform/nm-platform.h
+index d87eba3a63..f48662d900 100644
+--- a/src/libnm-platform/nm-platform.h
++++ b/src/libnm-platform/nm-platform.h
+@@ -216,6 +216,14 @@ struct _NMPlatformObjWithIfindex {
+     __NMPlatformObjWithIfindex_COMMON;
+ };
+ 
++typedef struct {
++    guint16 queue_id;
++} NMPlatformLinkBondPort;
++
++typedef union {
++    NMPlatformLinkBondPort bond;
++} NMPlatformLinkPortData;
++
+ struct _NMPlatformLink {
+     __NMPlatformObjWithIfindex_COMMON;
+     char       name[NMP_IFNAMSIZ];
+@@ -266,6 +274,12 @@ struct _NMPlatformLink {
+     guint64 tx_packets;
+     guint64 tx_bytes;
+ 
++    /* IFLA_INFO_SLAVE_KIND */
++    NMPortKind port_kind;
++
++    /* an interface can only hold IFLA_INFO_SLAVE_DATA for one link type */
++    NMPlatformLinkPortData port_data;
++
+     /* @connected is mostly identical to (@n_ifi_flags & IFF_UP). Except for bridge/bond masters,
+      * where we coerce the link as disconnect if it has no slaves. */
+     bool connected : 1;
+@@ -1226,6 +1240,10 @@ typedef struct {
+                              NMLinkType    type,
+                              int           ifindex,
+                              gconstpointer extra_data);
++    gboolean (*link_change)(NMPlatform                   *self,
++                            int                           ifindex,
++                            NMPortKind                    port_kind,
++                            const NMPlatformLinkPortData *port_data);
+     gboolean (*link_delete)(NMPlatform *self, int ifindex);
+     gboolean (*link_refresh)(NMPlatform *self, int ifindex);
+     gboolean (*link_set_netns)(NMPlatform *self, int ifindex, int netns_fd);
+@@ -2073,6 +2091,8 @@ nm_platform_link_change_flags(NMPlatform *self, int ifindex, unsigned value, gbo
+     return nm_platform_link_change_flags_full(self, ifindex, value, set ? value : 0u);
+ }
+ 
++gboolean nm_platform_link_change(NMPlatform *self, int ifindex, NMPlatformLinkBondPort *bond_port);
++
+ gboolean    nm_platform_link_get_udev_property(NMPlatform  *self,
+                                                int          ifindex,
+                                                const char  *name,
+@@ -2563,6 +2583,11 @@ int nm_platform_tfilter_cmp(const NMPlatformTfilter *a, const NMPlatformTfilter
+ int nm_platform_mptcp_addr_cmp(const NMPlatformMptcpAddr *a, const NMPlatformMptcpAddr *b);
+ 
+ void nm_platform_link_hash_update(const NMPlatformLink *obj, NMHashState *h);
++
++void nm_platform_link_bond_port_hash_update(const NMPlatformLinkBondPort *obj, NMHashState *h);
++int  nm_platform_link_bond_port_cmp(const NMPlatformLinkBondPort *a,
++                                    const NMPlatformLinkBondPort *b);
++
+ void nm_platform_ip4_address_hash_update(const NMPlatformIP4Address *obj, NMHashState *h);
+ void nm_platform_ip6_address_hash_update(const NMPlatformIP6Address *obj, NMHashState *h);
+ void nm_platform_ip4_route_hash_update(const NMPlatformIP4Route *obj,
+-- 
+2.40.1
+
+
+From 2ed620bce381b612cff7a14871b8939b48fdaca3 Mon Sep 17 00:00:00 2001
+From: Fernando Fernandez Mancera <ffmancera@riseup.net>
+Date: Thu, 9 Mar 2023 12:18:14 +0100
+Subject: [PATCH 5/8] platform: add support to prio property in bond ports
+
+(cherry picked from commit e200b162914d3bda4c03a19652124330a99bb3ae)
+(cherry picked from commit 84f17a2fbb73d592a29645003d7d76a9e8b332ca)
+(cherry picked from commit c787d22fc8194dc6d07c6b842b5a8a5944f42dc7)
+---
+ src/core/platform/nm-fake-platform.c   |  2 ++
+ src/core/platform/tests/test-link.c    | 23 +++++++++++++++---
+ src/libnm-platform/nm-linux-platform.c | 21 +++++++++++++++++
+ src/libnm-platform/nm-platform.c       | 32 ++++++++++++++++++++++----
+ src/libnm-platform/nm-platform.h       | 10 +++++---
+ 5 files changed, 78 insertions(+), 10 deletions(-)
+
+diff --git a/src/core/platform/nm-fake-platform.c b/src/core/platform/nm-fake-platform.c
+index c39c45e586..46f374d95c 100644
+--- a/src/core/platform/nm-fake-platform.c
++++ b/src/core/platform/nm-fake-platform.c
+@@ -681,6 +681,8 @@ link_change(NMPlatform                   *platform,
+         obj_tmp                               = nmp_object_clone(device->obj, FALSE);
+         obj_tmp->link.port_kind               = NM_PORT_KIND_BOND;
+         obj_tmp->link.port_data.bond.queue_id = port_data->bond.queue_id;
++        obj_tmp->link.port_data.bond.prio_has = port_data->bond.prio_has;
++        obj_tmp->link.port_data.bond.prio     = port_data->bond.prio;
+         link_set_obj(platform, device, obj_tmp);
+         return TRUE;
+     case NM_PORT_KIND_NONE:
+diff --git a/src/core/platform/tests/test-link.c b/src/core/platform/tests/test-link.c
+index bdbfbea34f..ac1f0d6ff6 100644
+--- a/src/core/platform/tests/test-link.c
++++ b/src/core/platform/tests/test-link.c
+@@ -112,7 +112,7 @@ software_add(NMLinkType link_type, const char *name)
+         gboolean bond0_exists = !!nm_platform_link_get_by_ifname(NM_PLATFORM_GET, "bond0");
+         int      r;
+         const NMPlatformLnkBond nm_platform_lnk_bond_default = {
+-            .mode = 3,
++            .mode = nmtst_rand_select(3, 1),
+         };
+ 
+         r = nm_platform_link_bond_add(NM_PLATFORM_GET, name, &nm_platform_lnk_bond_default, NULL);
+@@ -258,18 +258,35 @@ test_slave(int master, int type, SignalData *master_changed)
+         g_assert(!nm_platform_link_is_up(NM_PLATFORM_GET, ifindex));
+ 
+     if (NM_IN_SET(link_type, NM_LINK_TYPE_BOND)) {
+-        const NMPlatformLink  *link;
+-        NMPlatformLinkBondPort bond_port;
++        NMPlatformLinkBondPort   bond_port;
++        gboolean                 prio_has;
++        gboolean                 prio_supported;
++        const NMPlatformLink    *link;
++        const NMPlatformLnkBond *lnk;
++
++        link = nmtstp_link_get_typed(NM_PLATFORM_GET, 0, SLAVE_NAME, NM_LINK_TYPE_DUMMY);
++        g_assert(link);
++
++        lnk = nm_platform_link_get_lnk_bond(NM_PLATFORM_GET, master, NULL);
++        g_assert(lnk);
++
++        g_assert(NM_IN_SET(lnk->mode, 3, 1));
++        prio_supported = (lnk->mode == 1);
++        prio_has       = nmtst_get_rand_bool() && prio_supported;
+ 
+         bond_port = (NMPlatformLinkBondPort){
+             .queue_id = 5,
++            .prio_has = prio_has,
++            .prio     = prio_has ? 6 : 0,
+         };
++
+         g_assert(nm_platform_link_change(NM_PLATFORM_GET, ifindex, &bond_port));
+         accept_signals(link_changed, 1, 3);
+ 
+         link = nmtstp_link_get(NM_PLATFORM_GET, ifindex, SLAVE_NAME);
+         g_assert(link);
+         g_assert_cmpint(link->port_data.bond.queue_id, ==, 5);
++        g_assert(link->port_data.bond.prio_has || link->port_data.bond.prio == 0);
+     }
+ 
+     test_link_changed_signal_arg1 = FALSE;
+diff --git a/src/libnm-platform/nm-linux-platform.c b/src/libnm-platform/nm-linux-platform.c
+index 8158f364d2..19ccb09a86 100644
+--- a/src/libnm-platform/nm-linux-platform.c
++++ b/src/libnm-platform/nm-linux-platform.c
+@@ -177,6 +177,8 @@ G_STATIC_ASSERT(RTA_MAX == (__RTA_MAX - 1));
+ 
+ /*****************************************************************************/
+ 
++#define IFLA_BOND_SLAVE_PRIO 9
++
+ #define IFLA_BOND_PEER_NOTIF_DELAY 28
+ 
+ #undef IFLA_BOND_MAX
+@@ -3267,6 +3269,7 @@ _new_from_nl_link(NMPlatform            *platform,
+         if (li[IFLA_INFO_SLAVE_DATA]) {
+             static const struct nla_policy policy_bond_port[] = {
+                 [IFLA_BOND_SLAVE_QUEUE_ID] = {.type = NLA_U16},
++                [IFLA_BOND_SLAVE_PRIO]     = {.type = NLA_S32},
+             };
+             struct nlattr *bp[G_N_ELEMENTS(policy_bond_port)];
+ 
+@@ -3278,6 +3281,21 @@ _new_from_nl_link(NMPlatform            *platform,
+                 if (bp[IFLA_BOND_SLAVE_QUEUE_ID])
+                     obj->link.port_data.bond.queue_id = nla_get_u16(bp[IFLA_BOND_SLAVE_QUEUE_ID]);
+ 
++                if (bp[IFLA_BOND_SLAVE_PRIO]) {
++                    obj->link.port_data.bond.prio     = nla_get_s32(bp[IFLA_BOND_SLAVE_PRIO]);
++                    obj->link.port_data.bond.prio_has = TRUE;
++                    if (!_nm_platform_kernel_support_detected(
++                            NM_PLATFORM_KERNEL_SUPPORT_TYPE_IFLA_BOND_SLAVE_PRIO)) {
++                        /* support for IFLA_BOND_SLAVE_PRIO was added in 0a2ff7cc8ad48a86939a91bd3457f38e59e741a1,
++                         * kernel 6.0, 2 October 2022.
++                         *
++                         * We can only detect support if the attribute is present. A missing attribute
++                         * is not conclusive. */
++                        _nm_platform_kernel_support_init(
++                            NM_PLATFORM_KERNEL_SUPPORT_TYPE_IFLA_BOND_SLAVE_PRIO,
++                            1);
++                    }
++                }
+                 break;
+             case NM_PORT_KIND_NONE:
+                 break;
+@@ -8120,6 +8138,9 @@ link_change(NMPlatform                   *platform,
+ 
+         NLA_PUT_U16(nlmsg, IFLA_BOND_SLAVE_QUEUE_ID, port_data->bond.queue_id);
+ 
++        if (port_data->bond.prio_has)
++            NLA_PUT_S32(nlmsg, IFLA_BOND_SLAVE_PRIO, port_data->bond.prio);
++
+         nla_nest_end(nlmsg, nl_port_data);
+         nla_nest_end(nlmsg, nl_info);
+         break;
+diff --git a/src/libnm-platform/nm-platform.c b/src/libnm-platform/nm-platform.c
+index 01568243a3..d64c85674a 100644
+--- a/src/libnm-platform/nm-platform.c
++++ b/src/libnm-platform/nm-platform.c
+@@ -68,6 +68,7 @@ _nmp_link_port_data_to_string(NMPortKind                    port_kind,
+                               gsize                         sbuf_len)
+ {
+     const char *sbuf0 = sbuf;
++    char        s0[120];
+ 
+     nm_assert(port_data);
+ 
+@@ -76,7 +77,16 @@ _nmp_link_port_data_to_string(NMPortKind                    port_kind,
+         nm_strbuf_append_c(&sbuf, &sbuf_len, '\0');
+         goto out;
+     case NM_PORT_KIND_BOND:
+-        nm_strbuf_append(&sbuf, &sbuf_len, "port bond queue-id %u", port_data->bond.queue_id);
++        nm_strbuf_append(&sbuf,
++                         &sbuf_len,
++                         "port bond queue-id %u%s",
++                         port_data->bond.queue_id,
++                         port_data->bond.prio_has || port_data->bond.prio != 0
++                             ? nm_sprintf_buf(s0,
++                                              " prio%s %u",
++                                              port_data->bond.prio_has ? "" : "?",
++                                              port_data->bond.prio)
++                             : "");
+         goto out;
+     }
+ 
+@@ -2120,6 +2130,8 @@ nm_platform_link_set_name(NMPlatform *self, int ifindex, const char *name)
+ gboolean
+ nm_platform_link_change(NMPlatform *self, int ifindex, NMPlatformLinkBondPort *bond_port)
+ {
++    char sbuf_prio[100];
++
+     _CHECK_SELF(self, klass, FALSE);
+ 
+     g_return_val_if_fail(ifindex >= 0, FALSE);
+@@ -2127,8 +2139,18 @@ nm_platform_link_change(NMPlatform *self, int ifindex, NMPlatformLinkBondPort *b
+     if (_LOGD_ENABLED()) {
+         nm_auto_free_gstring GString *str = g_string_new("");
+ 
+-        if (bond_port)
+-            g_string_append_printf(str, "bond-port queue-id %d", bond_port->queue_id);
++        if (bond_port) {
++            nm_assert(bond_port->prio_has || bond_port->prio == 0);
++            g_string_append_printf(str,
++                                   "bond-port queue-id %d %s",
++                                   bond_port->queue_id,
++                                   bond_port->prio_has || bond_port->prio != 0
++                                       ? nm_sprintf_buf(sbuf_prio,
++                                                        "prio%s %" G_GINT32_FORMAT,
++                                                        !bond_port->prio_has ? "?" : "",
++                                                        bond_port->prio)
++                                       : "");
++        }
+ 
+         if (str->len > 0 && str->str[str->len - 1] == ' ')
+             g_string_truncate(str, str->len - 1);
+@@ -8017,7 +8039,7 @@ nm_platform_link_hash_update(const NMPlatformLink *obj, NMHashState *h)
+ void
+ nm_platform_link_bond_port_hash_update(const NMPlatformLinkBondPort *obj, NMHashState *h)
+ {
+-    nm_hash_update_vals(h, obj->queue_id);
++    nm_hash_update_vals(h, obj->prio, obj->queue_id, NM_HASH_COMBINE_BOOLS(guint8, obj->prio_has));
+ }
+ 
+ int
+@@ -8139,6 +8161,8 @@ nm_platform_link_bond_port_cmp(const NMPlatformLinkBondPort *a, const NMPlatform
+ {
+     NM_CMP_SELF(a, b);
+     NM_CMP_FIELD(a, b, queue_id);
++    NM_CMP_FIELD(a, b, prio);
++    NM_CMP_FIELD_BOOL(a, b, prio_has);
+ 
+     return 0;
+ }
+diff --git a/src/libnm-platform/nm-platform.h b/src/libnm-platform/nm-platform.h
+index f48662d900..611f50f901 100644
+--- a/src/libnm-platform/nm-platform.h
++++ b/src/libnm-platform/nm-platform.h
+@@ -217,7 +217,9 @@ struct _NMPlatformObjWithIfindex {
+ };
+ 
+ typedef struct {
++    gint32  prio;
+     guint16 queue_id;
++    bool    prio_has : 1;
+ } NMPlatformLinkBondPort;
+ 
+ typedef union {
+@@ -274,12 +276,12 @@ struct _NMPlatformLink {
+     guint64 tx_packets;
+     guint64 tx_bytes;
+ 
+-    /* IFLA_INFO_SLAVE_KIND */
+-    NMPortKind port_kind;
+-
+     /* an interface can only hold IFLA_INFO_SLAVE_DATA for one link type */
+     NMPlatformLinkPortData port_data;
+ 
++    /* IFLA_INFO_SLAVE_KIND */
++    NMPortKind port_kind;
++
+     /* @connected is mostly identical to (@n_ifi_flags & IFF_UP). Except for bridge/bond masters,
+      * where we coerce the link as disconnect if it has no slaves. */
+     bool connected : 1;
+@@ -1140,6 +1142,8 @@ typedef enum {
+      * were added at the same time. */
+     NM_PLATFORM_KERNEL_SUPPORT_TYPE_FRA_IP_PROTO,
+ 
++    NM_PLATFORM_KERNEL_SUPPORT_TYPE_IFLA_BOND_SLAVE_PRIO,
++
+     _NM_PLATFORM_KERNEL_SUPPORT_NUM,
+ } NMPlatformKernelSupportType;
+ 
+-- 
+2.40.1
+
+
+From 17badd932a2422a1d493ec3ad962d811f3854136 Mon Sep 17 00:00:00 2001
+From: Fernando Fernandez Mancera <ffmancera@riseup.net>
+Date: Tue, 9 May 2023 12:46:09 +0200
+Subject: [PATCH 6/8] libnm: add NM_VERSION_1_40_20
+
+(cherry picked from commit 4fd186bbf6cf9f791c7166a04c9ef4b7ec101a80)
+---
+ src/libnm-core-public/nm-version-macros.h.in | 1 +
+ src/libnm-core-public/nm-version.h           | 6 ++++++
+ 2 files changed, 7 insertions(+)
+
+diff --git a/src/libnm-core-public/nm-version-macros.h.in b/src/libnm-core-public/nm-version-macros.h.in
+index fc854aef86..cb3350f19c 100644
+--- a/src/libnm-core-public/nm-version-macros.h.in
++++ b/src/libnm-core-public/nm-version-macros.h.in
+@@ -73,6 +73,7 @@
+ #define NM_VERSION_1_38   (NM_ENCODE_VERSION (1, 38, 0))
+ #define NM_VERSION_1_40   (NM_ENCODE_VERSION (1, 40, 0))
+ #define NM_VERSION_1_40_4 (NM_ENCODE_VERSION (1, 40, 4))
++#define NM_VERSION_1_40_20 (NM_ENCODE_VERSION (1, 40, 20))
+ 
+ /* For releases, NM_API_VERSION is equal to NM_VERSION.
+  *
+diff --git a/src/libnm-core-public/nm-version.h b/src/libnm-core-public/nm-version.h
+index d9f9a12121..5b924ce620 100644
+--- a/src/libnm-core-public/nm-version.h
++++ b/src/libnm-core-public/nm-version.h
+@@ -347,6 +347,12 @@
+ #define NM_AVAILABLE_IN_1_40_4
+ #endif
+ 
++#if NM_VERSION_MAX_ALLOWED < NM_VERSION_1_40_20
++#define NM_AVAILABLE_IN_1_40_20 G_UNAVAILABLE(1, 40.20)
++#else
++#define NM_AVAILABLE_IN_1_40_20
++#endif
++
+ /*
+  * Synchronous API for calling D-Bus in libnm is deprecated. See
+  * https://networkmanager.dev/docs/libnm/latest/usage.html#sync-api
+-- 
+2.40.1
+
+
+From 7f3f3f50cf7d71c16c532dd73e0d4a2d6ffc129f Mon Sep 17 00:00:00 2001
+From: Fernando Fernandez Mancera <ffmancera@riseup.net>
+Date: Thu, 9 Mar 2023 12:18:14 +0100
+Subject: [PATCH 7/8] bonding: add support to prio property in bond ports
+
+Add per port priority support for bond active port re-selection during
+failover. A higher number means a higher priority in selection. The
+primary port still has the highest priority. This option is only
+compatible with active-backup, balance-tlb and balance-alb modes.
+
+(cherry picked from commit 2f0571f1930ff2c11de4f48b4433ca5fe6c897a0)
+(cherry picked from commit 748f6388aa0217b2c1c8bf879697ce48bcba8317)
+(cherry picked from commit d36620e654b20146e49209c191b7230936cc1596)
+---
+ src/core/devices/nm-device-bond.c             | 58 +++++++++++++++++--
+ .../plugins/ifcfg-rh/nms-ifcfg-rh-reader.c    | 23 ++++++--
+ .../plugins/ifcfg-rh/nms-ifcfg-rh-utils.c     |  1 +
+ .../plugins/ifcfg-rh/nms-ifcfg-rh-utils.h     |  2 +-
+ .../plugins/ifcfg-rh/nms-ifcfg-rh-writer.c    |  4 +-
+ .../plugins/ifcfg-rh/tests/test-ifcfg-rh.c    |  1 +
+ src/libnm-base/nm-base.h                      |  1 +
+ src/libnm-client-impl/libnm.ver               |  5 ++
+ src/libnm-client-impl/tests/test-gir.py       |  4 +-
+ src/libnm-core-impl/nm-setting-bond-port.c    | 48 ++++++++++++++-
+ src/libnm-core-public/nm-setting-bond-port.h  |  4 ++
+ src/libnmc-setting/nm-meta-setting-desc.c     |  6 ++
+ src/libnmc-setting/settings-docs.h.in         |  1 +
+ .../generate-docs-nm-settings-nmcli.xml.in    |  3 +
+ 14 files changed, 146 insertions(+), 15 deletions(-)
+
+diff --git a/src/core/devices/nm-device-bond.c b/src/core/devices/nm-device-bond.c
+index 0485689d10..9ecb2ac7ae 100644
+--- a/src/core/devices/nm-device-bond.c
++++ b/src/core/devices/nm-device-bond.c
+@@ -234,7 +234,12 @@ controller_update_port_connection(NMDevice     *self,
+     pllink = nm_platform_link_get(nm_device_get_platform(port), ifindex_port);
+ 
+     if (pllink && pllink->port_kind == NM_PORT_KIND_BOND)
+-        g_object_set(s_port, NM_SETTING_BOND_PORT_QUEUE_ID, pllink->port_data.bond.queue_id, NULL);
++        g_object_set(s_port,
++                     NM_SETTING_BOND_PORT_QUEUE_ID,
++                     pllink->port_data.bond.queue_id,
++                     NM_SETTING_BOND_PORT_PRIO,
++                     pllink->port_data.bond.prio,
++                     NULL);
+ 
+     g_object_set(nm_connection_get_setting_connection(connection),
+                  NM_SETTING_CONNECTION_MASTER,
+@@ -495,11 +500,52 @@ act_stage1_prepare(NMDevice *device, NMDeviceStateReason *out_failure_reason)
+ static void
+ commit_port_options(NMDevice *bond_device, NMDevice *port, NMSettingBondPort *s_port)
+ {
+-    nm_platform_link_change(
+-        nm_device_get_platform(port),
+-        nm_device_get_ifindex(port),
+-        &((NMPlatformLinkBondPort){.queue_id = s_port ? nm_setting_bond_port_get_queue_id(s_port)
+-                                                      : NM_BOND_PORT_QUEUE_ID_DEF}));
++    NMBondMode     mode = NM_BOND_MODE_UNKNOWN;
++    const char    *value;
++    NMSettingBond *s_bond;
++    gint32         prio;
++    gboolean       prio_has;
++
++    s_bond = nm_device_get_applied_setting(bond_device, NM_TYPE_SETTING_BOND);
++    if (s_bond) {
++        value = nm_setting_bond_get_option_normalized(s_bond, NM_SETTING_BOND_OPTION_MODE);
++        mode  = _nm_setting_bond_mode_from_string(value);
++    }
++
++    prio = s_port ? nm_setting_bond_port_get_prio(s_port) : NM_BOND_PORT_PRIO_DEF;
++
++    if (prio != 0) {
++        /* The profile explicitly sets the priority. No matter what, we try to set it
++         * in netlink. */
++        prio_has = TRUE;
++    } else if (!NM_IN_SET(mode, NM_BOND_MODE_ACTIVEBACKUP, NM_BOND_MODE_TLB, NM_BOND_MODE_ALB)) {
++        /* The priority only is configurable with certain modes. If we don't have
++         * one of those modes, don't try to set the priority explicitly to zero. */
++        prio_has = FALSE;
++    } else if (nm_platform_kernel_support_get_full(
++                   NM_PLATFORM_KERNEL_SUPPORT_TYPE_IFLA_BOND_SLAVE_PRIO,
++                   FALSE)
++               == NM_OPTION_BOOL_TRUE) {
++        /* We can only detect support if we have it. We cannot detect lack of support if
++         * we don't have it.
++         *
++         * But we did explicitly detect support, so explicitly set the prio to zero. */
++        prio_has = TRUE;
++    } else {
++        /* We either have an unsuitable mode or didn't detect kernel support for the
++         * priority. Don't explicitly set priority to zero. It is already the default,
++         * so it shouldn't be necessary. */
++        prio_has = FALSE;
++    }
++
++    nm_platform_link_change(nm_device_get_platform(port),
++                            nm_device_get_ifindex(port),
++                            &((NMPlatformLinkBondPort){
++                                .queue_id = s_port ? nm_setting_bond_port_get_queue_id(s_port)
++                                                   : NM_BOND_PORT_QUEUE_ID_DEF,
++                                .prio     = prio_has ? prio : 0,
++                                .prio_has = prio_has,
++                            }));
+ }
+ 
+ static NMTernary
+diff --git a/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-reader.c b/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-reader.c
+index 4d8e7bd69b..02ba843201 100644
+--- a/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-reader.c
++++ b/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-reader.c
+@@ -5557,6 +5557,7 @@ make_bond_port_setting(shvarFile *ifcfg)
+     gs_free char *value_to_free = NULL;
+     const char   *value;
+     guint         queue_id;
++    gint32        prio;
+ 
+     g_return_val_if_fail(ifcfg != NULL, FALSE);
+ 
+@@ -5565,11 +5566,23 @@ make_bond_port_setting(shvarFile *ifcfg)
+         s_port = nm_setting_bond_port_new();
+         queue_id =
+             _nm_utils_ascii_str_to_uint64(value, 10, 0, G_MAXUINT16, NM_BOND_PORT_QUEUE_ID_DEF);
+-        if (errno != 0) {
+-            PARSE_WARNING("Invalid bond port queue_id value '%s'", value);
+-            return s_port;
+-        }
+-        g_object_set(G_OBJECT(s_port), NM_SETTING_BOND_PORT_QUEUE_ID, queue_id, NULL);
++        if (errno != 0)
++            PARSE_WARNING("Invalid bond port queue_id value BOND_PORT_QUEUE_ID '%s'", value);
++        else
++            g_object_set(G_OBJECT(s_port), NM_SETTING_BOND_PORT_QUEUE_ID, queue_id, NULL);
++    }
++
++    nm_clear_g_free(&value_to_free);
++    value = svGetValue(ifcfg, "BOND_PORT_PRIO", &value_to_free);
++    if (value) {
++        if (!s_port)
++            s_port = nm_setting_bond_port_new();
++        prio =
++            _nm_utils_ascii_str_to_int64(value, 10, G_MININT32, G_MAXINT32, NM_BOND_PORT_PRIO_DEF);
++        if (errno != 0)
++            PARSE_WARNING("Invalid bond port prio value BOND_PORT_PRIO '%s'", value);
++        else
++            g_object_set(G_OBJECT(s_port), NM_SETTING_BOND_PORT_PRIO, prio, NULL);
+     }
+ 
+     return s_port;
+diff --git a/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-utils.c b/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-utils.c
+index e1ef817478..ef4276da73 100644
+--- a/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-utils.c
++++ b/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-utils.c
+@@ -827,6 +827,7 @@ const NMSIfcfgKeyTypeInfo nms_ifcfg_well_known_keys[] = {
+     _KEY_TYPE("BAND", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
+     _KEY_TYPE("BONDING_MASTER", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
+     _KEY_TYPE("BONDING_OPTS", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
++    _KEY_TYPE("BOND_PORT_PRIO", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
+     _KEY_TYPE("BOND_PORT_QUEUE_ID", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
+     _KEY_TYPE("BOOTPROTO", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
+     _KEY_TYPE("BRIDGE", NMS_IFCFG_KEY_TYPE_IS_PLAIN),
+diff --git a/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-utils.h b/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-utils.h
+index d1f8dbad9c..e3d3d87321 100644
+--- a/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-utils.h
++++ b/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-utils.h
+@@ -33,7 +33,7 @@ typedef struct {
+     NMSIfcfgKeyTypeFlags key_flags;
+ } NMSIfcfgKeyTypeInfo;
+ 
+-extern const NMSIfcfgKeyTypeInfo nms_ifcfg_well_known_keys[256];
++extern const NMSIfcfgKeyTypeInfo nms_ifcfg_well_known_keys[257];
+ 
+ const NMSIfcfgKeyTypeInfo *nms_ifcfg_well_known_key_find_info(const char *key, gssize *out_idx);
+ 
+diff --git a/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-writer.c b/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-writer.c
+index e8948c3dd0..e340c9fe13 100644
+--- a/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-writer.c
++++ b/src/core/settings/plugins/ifcfg-rh/nms-ifcfg-rh-writer.c
+@@ -1910,8 +1910,10 @@ write_bond_port_setting(NMConnection *connection, shvarFile *ifcfg)
+     NMSettingBondPort *s_port;
+ 
+     s_port = _nm_connection_get_setting(connection, NM_TYPE_SETTING_BOND_PORT);
+-    if (s_port)
++    if (s_port) {
+         svSetValueInt64(ifcfg, "BOND_PORT_QUEUE_ID", nm_setting_bond_port_get_queue_id(s_port));
++        svSetValueInt64(ifcfg, "BOND_PORT_PRIO", nm_setting_bond_port_get_prio(s_port));
++    }
+ }
+ 
+ static gboolean
+diff --git a/src/core/settings/plugins/ifcfg-rh/tests/test-ifcfg-rh.c b/src/core/settings/plugins/ifcfg-rh/tests/test-ifcfg-rh.c
+index 886a605fb2..d2ac2b29db 100644
+--- a/src/core/settings/plugins/ifcfg-rh/tests/test-ifcfg-rh.c
++++ b/src/core/settings/plugins/ifcfg-rh/tests/test-ifcfg-rh.c
+@@ -8325,6 +8325,7 @@ test_write_bond_port(void)
+ 
+     s_bond_port = _nm_connection_new_setting(connection, NM_TYPE_SETTING_BOND_PORT);
+     g_object_set(s_bond_port, NM_SETTING_BOND_PORT_QUEUE_ID, 1, NULL);
++    g_object_set(s_bond_port, NM_SETTING_BOND_PORT_PRIO, 10, NULL);
+ 
+     nmtst_assert_connection_verifies(connection);
+ 
+diff --git a/src/libnm-base/nm-base.h b/src/libnm-base/nm-base.h
+index 28feb48429..b9161c7680 100644
+--- a/src/libnm-base/nm-base.h
++++ b/src/libnm-base/nm-base.h
+@@ -392,6 +392,7 @@ typedef struct {
+ /****************************************************************************/
+ 
+ #define NM_BOND_PORT_QUEUE_ID_DEF 0
++#define NM_BOND_PORT_PRIO_DEF     0
+ 
+ /*****************************************************************************/
+ 
+diff --git a/src/libnm-client-impl/libnm.ver b/src/libnm-client-impl/libnm.ver
+index 2478defa34..7c98646253 100644
+--- a/src/libnm-client-impl/libnm.ver
++++ b/src/libnm-client-impl/libnm.ver
+@@ -1878,3 +1878,8 @@ global:
+ 	nm_utils_ip_routes_to_variant;
+ 	nm_vpn_plugin_info_supports_multiple;
+ } libnm_1_40_0;
++
++libnm_1_40_20_bondp {
++global:
++	nm_setting_bond_port_get_prio;
++} libnm_1_40_0;
+diff --git a/src/libnm-client-impl/tests/test-gir.py b/src/libnm-client-impl/tests/test-gir.py
+index d91849b8fe..84919dd533 100755
+--- a/src/libnm-client-impl/tests/test-gir.py
++++ b/src/libnm-client-impl/tests/test-gir.py
+@@ -97,8 +97,10 @@ def syms_from_ver(verfile):
+         ):
+             c_syms[str_removesuffix(line, ";")] = version
+ 
+-    # This one is... messy.
++    # These are exceptions and we cannot know the version for the symbol so we
++    # harcode it.
+     c_syms["nm_ethtool_optname_is_feature"] = "1.20"
++    c_syms["nm_setting_bond_port_get_prio"] = "1.44"
+ 
+     return c_syms
+ 
+diff --git a/src/libnm-core-impl/nm-setting-bond-port.c b/src/libnm-core-impl/nm-setting-bond-port.c
+index d1656a31ac..a6daad8b19 100644
+--- a/src/libnm-core-impl/nm-setting-bond-port.c
++++ b/src/libnm-core-impl/nm-setting-bond-port.c
+@@ -22,9 +22,10 @@
+ 
+ /*****************************************************************************/
+ 
+-NM_GOBJECT_PROPERTIES_DEFINE(NMSettingBondPort, PROP_QUEUE_ID, );
++NM_GOBJECT_PROPERTIES_DEFINE(NMSettingBondPort, PROP_QUEUE_ID, PROP_PRIO, );
+ 
+ typedef struct {
++    gint32  prio;
+     guint32 queue_id;
+ } NMSettingBondPortPrivate;
+ 
+@@ -65,6 +66,22 @@ nm_setting_bond_port_get_queue_id(NMSettingBondPort *setting)
+     return NM_SETTING_BOND_PORT_GET_PRIVATE(setting)->queue_id;
+ }
+ 
++/**
++ * nm_setting_bond_port_get_prio:
++ * @setting: the #NMSettingBondPort
++ *
++ * Returns: the #NMSettingBondPort:prio property of the setting
++ *
++ * Since: 1.44, 1.42.8, 1.40.20, rhel-8.9
++ **/
++gint32
++nm_setting_bond_port_get_prio(NMSettingBondPort *setting)
++{
++    g_return_val_if_fail(NM_IS_SETTING_BOND_PORT(setting), 0);
++
++    return NM_SETTING_BOND_PORT_GET_PRIVATE(setting)->prio;
++}
++
+ /*****************************************************************************/
+ 
+ static gboolean
+@@ -165,6 +182,35 @@ nm_setting_bond_port_class_init(NMSettingBondPortClass *klass)
+                                               NMSettingBondPort,
+                                               _priv.queue_id);
+ 
++    /**
++     * NMSettingBondPort:prio:
++     *
++     * The port priority for bond active port re-selection during failover. A
++     * higher number means a higher priority in selection. The primary port has
++     * the highest priority. This option is only compatible with active-backup,
++     * balance-tlb and balance-alb modes.
++     *
++     * Since: 1.44, 1.42.8, 1.40.20, rhel-8.9
++     **/
++    /* ---ifcfg-rh---
++     * property: prio
++     * variable: BOND_PORT_PRIO(+)
++     * values: -2147483648 - 2147483647
++     * default: 0
++     * description: Port priority.
++     * ---end---
++     */
++    _nm_setting_property_define_direct_int32(properties_override,
++                                             obj_properties,
++                                             NM_SETTING_BOND_PORT_PRIO,
++                                             PROP_PRIO,
++                                             G_MININT32,
++                                             G_MAXINT32,
++                                             NM_BOND_PORT_PRIO_DEF,
++                                             NM_SETTING_PARAM_INFERRABLE,
++                                             NMSettingBondPort,
++                                             _priv.prio);
++
+     g_object_class_install_properties(object_class, _PROPERTY_ENUMS_LAST, obj_properties);
+ 
+     _nm_setting_class_commit(setting_class,
+diff --git a/src/libnm-core-public/nm-setting-bond-port.h b/src/libnm-core-public/nm-setting-bond-port.h
+index 0b20e4a8cb..abaedfcd6d 100644
+--- a/src/libnm-core-public/nm-setting-bond-port.h
++++ b/src/libnm-core-public/nm-setting-bond-port.h
+@@ -29,6 +29,7 @@ G_BEGIN_DECLS
+ #define NM_SETTING_BOND_PORT_SETTING_NAME "bond-port"
+ 
+ #define NM_SETTING_BOND_PORT_QUEUE_ID "queue-id"
++#define NM_SETTING_BOND_PORT_PRIO     "prio"
+ 
+ typedef struct _NMSettingBondPortClass NMSettingBondPortClass;
+ 
+@@ -41,6 +42,9 @@ NMSetting *nm_setting_bond_port_new(void);
+ NM_AVAILABLE_IN_1_34
+ guint32 nm_setting_bond_port_get_queue_id(NMSettingBondPort *setting);
+ 
++NM_AVAILABLE_IN_1_40_20
++gint32 nm_setting_bond_port_get_prio(NMSettingBondPort *setting);
++
+ G_END_DECLS
+ 
+ #endif /* __NM_SETTING_BOND_PORT_H__ */
+diff --git a/src/libnmc-setting/nm-meta-setting-desc.c b/src/libnmc-setting/nm-meta-setting-desc.c
+index 31beb65ef9..5714722de2 100644
+--- a/src/libnmc-setting/nm-meta-setting-desc.c
++++ b/src/libnmc-setting/nm-meta-setting-desc.c
+@@ -5154,6 +5154,12 @@ static const NMMetaPropertyInfo *const property_infos_BOND_PORT[] = {
+         .prompt =                       N_("Queue ID"),
+         .property_type =                &_pt_gobject_int,
+     ),
++    PROPERTY_INFO_WITH_DESC (NM_SETTING_BOND_PORT_PRIO,
++        .is_cli_option =                TRUE,
++        .property_alias =               "prio",
++        .prompt =                       N_("Port Priority"),
++        .property_type=                 &_pt_gobject_int,
++    ),
+     NULL
+ };
+ 
+diff --git a/src/libnmc-setting/settings-docs.h.in b/src/libnmc-setting/settings-docs.h.in
+index 62edc77f6b..6a5f416348 100644
+--- a/src/libnmc-setting/settings-docs.h.in
++++ b/src/libnmc-setting/settings-docs.h.in
+@@ -426,6 +426,7 @@
+ #define DESCRIBE_DOC_NM_SETTING_WPAN_PAGE N_("IEEE 802.15.4 channel page. A positive integer or -1, meaning \"do not set, use whatever the device is already set to\".")
+ #define DESCRIBE_DOC_NM_SETTING_WPAN_PAN_ID N_("IEEE 802.15.4 Personal Area Network (PAN) identifier.")
+ #define DESCRIBE_DOC_NM_SETTING_WPAN_SHORT_ADDRESS N_("Short IEEE 802.15.4 address to be used within a restricted environment.")
++#define DESCRIBE_DOC_NM_SETTING_BOND_PORT_PRIO N_("The port priority for bond active port re-selection during failover. A higher number means a higher priority in selection. The primary port has the highest priority. This option is only compatible with active-backup, balance-tlb and balance-alb modes.")
+ #define DESCRIBE_DOC_NM_SETTING_BOND_PORT_QUEUE_ID N_("The queue ID of this bond port. The maximum value of queue ID is the number of TX queues currently active in device.")
+ #define DESCRIBE_DOC_NM_SETTING_HOSTNAME_FROM_DHCP N_("Whether the system hostname can be determined from DHCP on this connection. When set to NM_TERNARY_DEFAULT (-1), the value from global configuration is used. If the property doesn't have a value in the global configuration, NetworkManager assumes the value to be NM_TERNARY_TRUE (1).")
+ #define DESCRIBE_DOC_NM_SETTING_HOSTNAME_FROM_DNS_LOOKUP N_("Whether the system hostname can be determined from reverse DNS lookup of addresses on this device. When set to NM_TERNARY_DEFAULT (-1), the value from global configuration is used. If the property doesn't have a value in the global configuration, NetworkManager assumes the value to be NM_TERNARY_TRUE (1).")
+diff --git a/src/nmcli/generate-docs-nm-settings-nmcli.xml.in b/src/nmcli/generate-docs-nm-settings-nmcli.xml.in
+index 03e6c0b54b..adf7895f0d 100644
+--- a/src/nmcli/generate-docs-nm-settings-nmcli.xml.in
++++ b/src/nmcli/generate-docs-nm-settings-nmcli.xml.in
+@@ -271,6 +271,9 @@
+         <property name="queue-id"
+                   alias="queue-id"
+                   description="The queue ID of this bond port. The maximum value of queue ID is the number of TX queues currently active in device." />
++        <property name="prio"
++                  alias="prio"
++                  description="The port priority for bond active port re-selection during failover. A higher number means a higher priority in selection. The primary port has the highest priority. This option is only compatible with active-backup, balance-tlb and balance-alb modes." />
+     </setting>
+     <setting name="bridge" >
+         <property name="mac-address"
+-- 
+2.40.1
+
+
+From 37765e3c5681b7cbe004b615af70dabfefacc785 Mon Sep 17 00:00:00 2001
+From: Fernando Fernandez Mancera <ffmancera@riseup.net>
+Date: Wed, 10 May 2023 18:18:18 +0200
+Subject: [PATCH 8/8] tests: adjust test-gir.py to allow extra elements in
+ section name
+
+(cherry picked from commit 9b8220c9fa6c26257fe809171355b29219efe26a)
+(cherry picked from commit 56e19bdf685ebc152eaf0cc8d2571387b8ea669b)
+(cherry picked from commit ca41be98a075e03e61dc7e898d772792c0a65619)
+---
+ src/libnm-client-impl/tests/test-gir.py | 18 +++++-------------
+ 1 file changed, 5 insertions(+), 13 deletions(-)
+
+diff --git a/src/libnm-client-impl/tests/test-gir.py b/src/libnm-client-impl/tests/test-gir.py
+index 84919dd533..50b2fade6b 100755
+--- a/src/libnm-client-impl/tests/test-gir.py
++++ b/src/libnm-client-impl/tests/test-gir.py
+@@ -7,6 +7,7 @@
+ from __future__ import print_function
+ import xml.etree.ElementTree as ET
+ import argparse
++import re
+ import sys
+ 
+ C_NS = "http://www.gtk.org/introspection/c/1.0"
+@@ -60,17 +61,6 @@ def str_removesuffix(string, suffix):
+             return string
+ 
+ 
+-# Older Python doesn't have str.removeprefix()
+-def str_removeprefix(string, prefix):
+-    try:
+-        return string.removeprefix(prefix)
+-    except AttributeError:
+-        if string.startswith(prefix):
+-            return string[len(prefix) :]
+-        else:
+-            return string
+-
+-
+ def syms_from_ver(verfile):
+     c_syms = {}
+     for line in open(verfile).readlines():
+@@ -78,8 +68,10 @@ def syms_from_ver(verfile):
+ 
+         if line.endswith("{"):
+             line = str_removesuffix(line, " {")
+-            line = str_removeprefix(line, "libnm_")
+-            (major, minor, micro) = line.split("_")
++            m = re.search(r"^libnm_([0-9]+)_([0-9]+)_([0-9]+)$", line)
++            if not m:
++                continue
++            (major, minor, micro) = m.groups()
+             if int(major) > 1 or int(minor) > 0:
+                 if int(micro) > 0:
+                     # Snap to next major version. Perhaps not
+-- 
+2.40.1
+
