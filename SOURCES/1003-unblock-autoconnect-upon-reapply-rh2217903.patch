@@ -1,0 +1,45 @@
+From 18ce5f43bd16b3cc394424619652c782cb3795c3 Mon Sep 17 00:00:00 2001
+From: Gris Ge <fge@redhat.com>
+Date: Tue, 27 Jun 2023 15:02:54 +0800
+Subject: [PATCH] setting-connection: Unblock autoconnect upon finish of
+ `Reapply`
+
+The activation of a connection will clear the block of autoconnect,
+we should do the same for reapply.
+
+Signed-off-by: Gris Ge <fge@redhat.com>
+(cherry picked from commit 0486efd3584c70179072f611e63b9c0ff6851b80)
+---
+ src/core/devices/nm-device.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/src/core/devices/nm-device.c b/src/core/devices/nm-device.c
+index c168fa045d..62a9ff1e84 100644
+--- a/src/core/devices/nm-device.c
++++ b/src/core/devices/nm-device.c
+@@ -12902,6 +12902,7 @@ check_and_reapply_connection(NMDevice            *self,
+     NMConnection                  *con_old;
+     NMConnection                  *con_new;
+     GHashTableIter                 iter;
++    NMSettingsConnection          *sett_conn;
+ 
+     if (priv->state < NM_DEVICE_STATE_PREPARE || priv->state > NM_DEVICE_STATE_ACTIVATED) {
+         g_set_error_literal(error,
+@@ -13074,6 +13075,14 @@ check_and_reapply_connection(NMDevice            *self,
+     if (priv->state >= NM_DEVICE_STATE_ACTIVATED)
+         nm_device_update_metered(self);
+ 
++    sett_conn = nm_device_get_settings_connection(self);
++    if (sett_conn) {
++        nm_settings_connection_autoconnect_blocked_reason_set(
++            sett_conn,
++            NM_SETTINGS_AUTO_CONNECT_BLOCKED_REASON_USER_REQUEST,
++            FALSE);
++    }
++
+     /* Notify dispatcher when re-applied */
+     _LOGD(LOGD_DEVICE, "Notifying re-apply complete");
+     nm_dispatcher_call_device(NM_DISPATCHER_ACTION_REAPPLY, self, NULL, NULL, NULL, NULL);
+-- 
+2.39.3
+
