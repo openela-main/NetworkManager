@@ -6,7 +6,7 @@
 %global epoch_version 1
 %global real_version 1.40.16
 %global rpm_version %{real_version}
-%global release_version 4
+%global release_version 9
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -196,9 +196,14 @@ Patch3: 0003-order-ipv6-addresses.patch
 
 # Bugfixes that are only relevant until next rebase of the package.
 # Patch1001: 1001-some.patch
-Patch1001: 1001-ipv6ll-don-t-regenerate-the-address-when-removed-rh2209353.patch
-Patch1002: 1002-Revert-infiniband-avoid-normalizing-the-p-key-rh2209975.patch
-Patch1003: 1003-unblock-autoconnect-upon-reapply-rh2217899.patch
+Patch1001: 1001-cloud-setup-IMDSv2-rh2151987.patch
+Patch1002: 1002-dns-add-support-to-no-aaaa-option-rh2144521.patch
+Patch1003: 1003-suppport-bond-port-prio-rh1920398.patch
+Patch1004: 1004-team-don-t-try-to-connect-to-teamd-in-update_connect-rh2182029.patch
+Patch1005: 1005-ipv6ll-don-t-regenerate-the-address-when-removed-rh2209353.patch
+Patch1006: 1006-fix-read-infiniband-from-ifcfg-rh2209164.patch
+Patch1007: 1007-unblock-autoconnect-on-reapply-rh2207690.patch
+Patch1008: 1008-cloud-setup-fix-terminating-in-reconfig-rh2221903.patch
 
 Requires(post): systemd
 %if 0%{?fedora} || 0%{?rhel} >= 8
@@ -1234,14 +1239,30 @@ fi
 
 
 %changelog
-* Thu Jun 29 2023 Gris Ge <fge@redhat.com> - 1:1.40.16-4
-- unblock autoconnect upon reapply (rh #2217899)
+* Wed Jul 19 2023 Beniamino Galvani <bgalvani@redhat.com> - 1:1.40.16-9
+- cloud-setup: fix terminating in the middle of reconfiguration (rh #2221903)
 
-* Fri May 26 2023 Wen Liang <wenliang@redhat.com> - 1:1.40.16-3
-- revert "infiniband: avoid normalizing the p-key when reading from ifcfg" (rh #2209975)
+* Wed Jun 28 2023 Thomas Haller <thaller@redhat.com> - 1:1.40.16-8
+- unblock autoconnect of profile on reapply (rh #2207690)
 
-* Tue May 23 2023 Beniamino Galvani <bgalvani@redhat.com> - 1:1.40.16-2
+* Mon Jun  5 2023 Thomas Haller <thaller@redhat.com> - 1:1.40.16-7
+- fix reading infiniband p-key from ifcfg files (rh #2209164)
+
+* Wed May 24 2023 Beniamino Galvani <bgalvani@redhat.com> - 1:1.40.16-6
 - don't fail when the IPv6 link-local address is removed (rh #2209353)
+
+* Wed May 17 2023 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.40.16-5
+- support bond port prio property (rh #1920398)
+- team: don't try to connect to teamd in update_connection() (rh #2182029)
+
+* Wed Apr 19 2023 Beniamino Galvani <bgalvani@redhat.com> - 1:1.40.16-4
+- support the "no-aaaa" resolv.conf option (rh #2144521)
+
+* Mon Mar 13 2023 Lubomir Rintel <lkundrak@v3.sk> - 1:1.40.16-3
+- cloud-setup/ec2: fix regression with IMDSv2 support (rh #2181466)
+
+* Mon Mar 13 2023 Lubomir Rintel <lkundrak@v3.sk> - 1:1.40.16-2
+- cloud-setup/ec2: add IMDSv2 support (rh #2151986)
 
 * Thu Feb 23 2023 Beniamino Galvani <bgalvani@redhat.com> - 1:1.40.16-1
 - Update to 1.40.16 release

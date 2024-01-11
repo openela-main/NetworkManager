@@ -1,0 +1,1490 @@
+From 89a6ce575d52bbaa1b928275c39517a071449da7 Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Mon, 27 Feb 2023 09:14:10 +0100
+Subject: [PATCH 1/7] cloud-setup: use nm_strv_dup_packed() in
+ nm_http_client_poll_get()
+
+No need to do a deep clone. The strv array is not ever modified and we
+pack it together in one memory allocation.
+
+(cherry picked from commit 599fe234ea4864396eb70530513b2646aa97f576)
+(cherry picked from commit 3787eacac9c1fc9ff9b423f9d9cea9907e209ebb)
+(cherry picked from commit 89a6ce575d52bbaa1b928275c39517a071449da7)
+---
+ src/nm-cloud-setup/nm-http-client.c | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/src/nm-cloud-setup/nm-http-client.c b/src/nm-cloud-setup/nm-http-client.c
+index a0964e2165..98ede1e403 100644
+--- a/src/nm-cloud-setup/nm-http-client.c
++++ b/src/nm-cloud-setup/nm-http-client.c
+@@ -419,7 +419,7 @@ _poll_get_data_free(gpointer data)
+     g_free(poll_get_data->uri);
+ 
+     nm_clear_pointer(&poll_get_data->response_data, g_bytes_unref);
+-    g_strfreev((char **) poll_get_data->http_headers);
++    g_free((gpointer) poll_get_data->http_headers);
+ 
+     nm_g_slice_free(poll_get_data);
+ }
+@@ -552,9 +552,14 @@ nm_http_client_poll_get(NMHttpClient               *self,
+         .check_fcn          = check_fcn,
+         .check_user_data    = check_user_data,
+         .response_code      = -1,
+-        .http_headers       = NM_CAST_STRV_CC(g_strdupv((char **) http_headers)),
++        .http_headers       = NULL,
+     };
+ 
++    if (http_headers) {
++        poll_get_data->http_headers =
++            nm_strv_dup_packed(http_headers, -1) ?: g_new(const char *, 1);
++    }
++
+     nmcs_wait_for_objects_register(poll_get_data->task);
+ 
+     g_task_set_task_data(poll_get_data->task, poll_get_data, _poll_get_data_free);
+-- 
+2.39.2
+
+
+From 36d417af60a2a09863e00cae869899883265ee8c Mon Sep 17 00:00:00 2001
+From: Lubomir Rintel <lkundrak@v3.sk>
+Date: Mon, 27 Feb 2023 00:09:13 +0100
+Subject: [PATCH 2/7] cloud_setup: unexport nm_http_client_get()
+
+It's not used anywhere.
+
+(cherry picked from commit ce225b2c06089adc402277f2b80afacb9da8cc5f)
+(cherry picked from commit 23b9514080c0c578ec5a8e023081837240f41896)
+(cherry picked from commit 36d417af60a2a09863e00cae869899883265ee8c)
+---
+ src/nm-cloud-setup/nm-http-client.c |  4 ++--
+ src/nm-cloud-setup/nm-http-client.h | 15 ---------------
+ 2 files changed, 2 insertions(+), 17 deletions(-)
+
+diff --git a/src/nm-cloud-setup/nm-http-client.c b/src/nm-cloud-setup/nm-http-client.c
+index 98ede1e403..e6cc20fa75 100644
+--- a/src/nm-cloud-setup/nm-http-client.c
++++ b/src/nm-cloud-setup/nm-http-client.c
+@@ -256,7 +256,7 @@ _get_cancelled_cb(GObject *object, gpointer user_data)
+     _ehandle_complete(edata, error);
+ }
+ 
+-void
++static void
+ nm_http_client_get(NMHttpClient       *self,
+                    const char         *url,
+                    int                 timeout_msec,
+@@ -366,7 +366,7 @@ nm_http_client_get(NMHttpClient       *self,
+  *
+  * Returns: %TRUE on success or %FALSE with an error code.
+  */
+-gboolean
++static gboolean
+ nm_http_client_get_finish(NMHttpClient *self,
+                           GAsyncResult *result,
+                           long         *out_response_code,
+diff --git a/src/nm-cloud-setup/nm-http-client.h b/src/nm-cloud-setup/nm-http-client.h
+index 0a7052ae25..6cc08ba97c 100644
+--- a/src/nm-cloud-setup/nm-http-client.h
++++ b/src/nm-cloud-setup/nm-http-client.h
+@@ -27,21 +27,6 @@ GMainContext *nm_http_client_get_main_context(NMHttpClient *self);
+ 
+ /*****************************************************************************/
+ 
+-void nm_http_client_get(NMHttpClient       *self,
+-                        const char         *uri,
+-                        int                 timeout_msec,
+-                        gssize              max_data,
+-                        const char *const  *http_headers,
+-                        GCancellable       *cancellable,
+-                        GAsyncReadyCallback callback,
+-                        gpointer            user_data);
+-
+-gboolean nm_http_client_get_finish(NMHttpClient *self,
+-                                   GAsyncResult *result,
+-                                   long         *out_response_code,
+-                                   GBytes      **out_response_data,
+-                                   GError      **error);
+-
+ typedef gboolean (*NMHttpClientPollGetCheckFcn)(long     response_code,
+                                                 GBytes  *response_data,
+                                                 gpointer check_user_data,
+-- 
+2.39.2
+
+
+From 20cd11ee4974bb1690d523d5700492ad9c618688 Mon Sep 17 00:00:00 2001
+From: Lubomir Rintel <lkundrak@v3.sk>
+Date: Mon, 27 Feb 2023 00:09:40 +0100
+Subject: [PATCH 3/7] cloud-setup: rename get/Get identifiers to req and Req
+
+We're going to extend those to issue methods other than GET.
+Also, "request" would've been too long, "req" looks nicer.
+
+(cherry picked from commit 85ce088616aae3d61c9bc51eb395d1f59ed9a503)
+(cherry picked from commit 6e8cfbae32e22ba75693146039b53b516a4147e1)
+(cherry picked from commit 20cd11ee4974bb1690d523d5700492ad9c618688)
+---
+ src/nm-cloud-setup/nm-http-client.c       | 142 +++++++++++-----------
+ src/nm-cloud-setup/nm-http-client.h       |   8 +-
+ src/nm-cloud-setup/nmcs-provider-aliyun.c |  20 +--
+ src/nm-cloud-setup/nmcs-provider-azure.c  |  24 ++--
+ src/nm-cloud-setup/nmcs-provider-ec2.c    |  14 +--
+ src/nm-cloud-setup/nmcs-provider-gcp.c    |  20 +--
+ 6 files changed, 114 insertions(+), 114 deletions(-)
+
+diff --git a/src/nm-cloud-setup/nm-http-client.c b/src/nm-cloud-setup/nm-http-client.c
+index e6cc20fa75..ed7914df8f 100644
+--- a/src/nm-cloud-setup/nm-http-client.c
++++ b/src/nm-cloud-setup/nm-http-client.c
+@@ -104,12 +104,12 @@ typedef struct {
+ } GetResult;
+ 
+ static void
+-_get_result_free(gpointer data)
++_req_result_free(gpointer data)
+ {
+-    GetResult *get_result = data;
++    GetResult *req_result = data;
+ 
+-    g_bytes_unref(get_result->response_data);
+-    nm_g_slice_free(get_result);
++    g_bytes_unref(req_result->response_data);
++    nm_g_slice_free(req_result);
+ }
+ 
+ typedef struct {
+@@ -154,7 +154,7 @@ _ehandle_free(EHandleData *edata)
+ static void
+ _ehandle_complete(EHandleData *edata, GError *error_take)
+ {
+-    GetResult    *get_result;
++    GetResult    *req_result;
+     gs_free char *str_tmp_1     = NULL;
+     long          response_code = -1;
+ 
+@@ -200,15 +200,15 @@ _ehandle_complete(EHandleData *edata, GError *error_take)
+ 
+     _ehandle_free_ehandle(edata);
+ 
+-    get_result  = g_slice_new(GetResult);
+-    *get_result = (GetResult){
++    req_result  = g_slice_new(GetResult);
++    *req_result = (GetResult){
+         .response_code = response_code,
+         /* This ensures that response_data is always NUL terminated. This is an important guarantee
+          * that NMHttpClient makes. */
+         .response_data = nm_str_buf_finalize_to_gbytes(&edata->recv_data),
+     };
+ 
+-    g_task_return_pointer(edata->task, get_result, _get_result_free);
++    g_task_return_pointer(edata->task, req_result, _req_result_free);
+ 
+     _ehandle_free(edata);
+ }
+@@ -257,7 +257,7 @@ _get_cancelled_cb(GObject *object, gpointer user_data)
+ }
+ 
+ static void
+-nm_http_client_get(NMHttpClient       *self,
++nm_http_client_req(NMHttpClient       *self,
+                    const char         *url,
+                    int                 timeout_msec,
+                    gssize              max_data,
+@@ -280,7 +280,7 @@ nm_http_client_get(NMHttpClient       *self,
+ 
+     edata  = g_slice_new(EHandleData);
+     *edata = (EHandleData){
+-        .task      = nm_g_task_new(self, cancellable, nm_http_client_get, callback, user_data),
++        .task      = nm_g_task_new(self, cancellable, nm_http_client_req, callback, user_data),
+         .recv_data = NM_STR_BUF_INIT(0, FALSE),
+         .max_data  = max_data,
+         .url       = g_strdup(url),
+@@ -352,7 +352,7 @@ nm_http_client_get(NMHttpClient       *self,
+ }
+ 
+ /**
+- * nm_http_client_get_finish:
++ * nm_http_client_req_finish:
+  * @self: the #NMHttpClient instance
+  * @result: the #GAsyncResult which to complete.
+  * @out_response_code: (allow-none) (out): the HTTP response code or -1 on other error.
+@@ -367,33 +367,33 @@ nm_http_client_get(NMHttpClient       *self,
+  * Returns: %TRUE on success or %FALSE with an error code.
+  */
+ static gboolean
+-nm_http_client_get_finish(NMHttpClient *self,
++nm_http_client_req_finish(NMHttpClient *self,
+                           GAsyncResult *result,
+                           long         *out_response_code,
+                           GBytes      **out_response_data,
+                           GError      **error)
+ {
+-    GetResult *get_result;
++    GetResult *req_result;
+ 
+     g_return_val_if_fail(NM_IS_HTTP_CLIENT(self), FALSE);
+-    g_return_val_if_fail(nm_g_task_is_valid(result, self, nm_http_client_get), FALSE);
++    g_return_val_if_fail(nm_g_task_is_valid(result, self, nm_http_client_req), FALSE);
+ 
+-    get_result = g_task_propagate_pointer(G_TASK(result), error);
++    req_result = g_task_propagate_pointer(G_TASK(result), error);
+ 
+-    nm_assert(!error || (!!get_result) == (!*error));
++    nm_assert(!error || (!!req_result) == (!*error));
+ 
+-    if (!get_result) {
++    if (!req_result) {
+         NM_SET_OUT(out_response_code, -1);
+         NM_SET_OUT(out_response_data, NULL);
+         return FALSE;
+     }
+ 
+-    NM_SET_OUT(out_response_code, get_result->response_code);
++    NM_SET_OUT(out_response_code, req_result->response_code);
+ 
+     /* response_data is binary, but is also guaranteed to be NUL terminated! */
+-    NM_SET_OUT(out_response_data, g_steal_pointer(&get_result->response_data));
++    NM_SET_OUT(out_response_data, g_steal_pointer(&req_result->response_data));
+ 
+-    _get_result_free(get_result);
++    _req_result_free(req_result);
+     return TRUE;
+ }
+ 
+@@ -403,63 +403,63 @@ typedef struct {
+     GTask                      *task;
+     char                       *uri;
+     const char *const          *http_headers;
+-    NMHttpClientPollGetCheckFcn check_fcn;
++    NMHttpClientPollReqCheckFcn check_fcn;
+     gpointer                    check_user_data;
+     GBytes                     *response_data;
+     gsize                       request_max_data;
+     long                        response_code;
+     int                         request_timeout_ms;
+-} PollGetData;
++} PollReqData;
+ 
+ static void
+-_poll_get_data_free(gpointer data)
++_poll_req_data_free(gpointer data)
+ {
+-    PollGetData *poll_get_data = data;
++    PollReqData *poll_req_data = data;
+ 
+-    g_free(poll_get_data->uri);
++    g_free(poll_req_data->uri);
+ 
+-    nm_clear_pointer(&poll_get_data->response_data, g_bytes_unref);
+-    g_free((gpointer) poll_get_data->http_headers);
++    nm_clear_pointer(&poll_req_data->response_data, g_bytes_unref);
++    g_free((gpointer) poll_req_data->http_headers);
+ 
+-    nm_g_slice_free(poll_get_data);
++    nm_g_slice_free(poll_req_data);
+ }
+ 
+ static void
+-_poll_get_probe_start_fcn(GCancellable       *cancellable,
++_poll_req_probe_start_fcn(GCancellable       *cancellable,
+                           gpointer            probe_user_data,
+                           GAsyncReadyCallback callback,
+                           gpointer            user_data)
+ {
+-    PollGetData *poll_get_data = probe_user_data;
++    PollReqData *poll_req_data = probe_user_data;
+ 
+-    /* balanced by _poll_get_probe_finish_fcn() */
+-    g_object_ref(poll_get_data->task);
++    /* balanced by _poll_req_probe_finish_fcn() */
++    g_object_ref(poll_req_data->task);
+ 
+-    nm_http_client_get(g_task_get_source_object(poll_get_data->task),
+-                       poll_get_data->uri,
+-                       poll_get_data->request_timeout_ms,
+-                       poll_get_data->request_max_data,
+-                       poll_get_data->http_headers,
++    nm_http_client_req(g_task_get_source_object(poll_req_data->task),
++                       poll_req_data->uri,
++                       poll_req_data->request_timeout_ms,
++                       poll_req_data->request_max_data,
++                       poll_req_data->http_headers,
+                        cancellable,
+                        callback,
+                        user_data);
+ }
+ 
+ static gboolean
+-_poll_get_probe_finish_fcn(GObject      *source,
++_poll_req_probe_finish_fcn(GObject      *source,
+                            GAsyncResult *result,
+                            gpointer      probe_user_data,
+                            GError      **error)
+ {
+-    PollGetData                      *poll_get_data = probe_user_data;
++    PollReqData                      *poll_req_data = probe_user_data;
+     _nm_unused gs_unref_object GTask *task =
+-        poll_get_data->task; /* balance ref from _poll_get_probe_start_fcn() */
++        poll_req_data->task; /* balance ref from _poll_req_probe_start_fcn() */
+     gboolean               success;
+     gs_free_error GError  *local_error   = NULL;
+     gs_unref_bytes GBytes *response_data = NULL;
+     long                   response_code = -1;
+ 
+-    success = nm_http_client_get_finish(g_task_get_source_object(poll_get_data->task),
++    success = nm_http_client_req_finish(g_task_get_source_object(poll_req_data->task),
+                                         result,
+                                         &response_code,
+                                         &response_data,
+@@ -476,10 +476,10 @@ _poll_get_probe_finish_fcn(GObject      *source,
+         return FALSE;
+     }
+ 
+-    if (poll_get_data->check_fcn) {
+-        success = poll_get_data->check_fcn(response_code,
++    if (poll_req_data->check_fcn) {
++        success = poll_req_data->check_fcn(response_code,
+                                            response_data,
+-                                           poll_get_data->check_user_data,
++                                           poll_req_data->check_user_data,
+                                            &local_error);
+     } else
+         success = (response_code == 200);
+@@ -494,15 +494,15 @@ _poll_get_probe_finish_fcn(GObject      *source,
+         return FALSE;
+     }
+ 
+-    poll_get_data->response_code = response_code;
+-    poll_get_data->response_data = g_steal_pointer(&response_data);
++    poll_req_data->response_code = response_code;
++    poll_req_data->response_data = g_steal_pointer(&response_data);
+     return TRUE;
+ }
+ 
+ static void
+-_poll_get_done_cb(GObject *source, GAsyncResult *result, gpointer user_data)
++_poll_req_done_cb(GObject *source, GAsyncResult *result, gpointer user_data)
+ {
+-    PollGetData          *poll_get_data = user_data;
++    PollReqData          *poll_req_data = user_data;
+     gs_free_error GError *error         = NULL;
+     gboolean              success;
+ 
+@@ -511,15 +511,15 @@ _poll_get_done_cb(GObject *source, GAsyncResult *result, gpointer user_data)
+     nm_assert((!!success) == (!error));
+ 
+     if (error)
+-        g_task_return_error(poll_get_data->task, g_steal_pointer(&error));
++        g_task_return_error(poll_req_data->task, g_steal_pointer(&error));
+     else
+-        g_task_return_boolean(poll_get_data->task, TRUE);
++        g_task_return_boolean(poll_req_data->task, TRUE);
+ 
+-    g_object_unref(poll_get_data->task);
++    g_object_unref(poll_req_data->task);
+ }
+ 
+ void
+-nm_http_client_poll_get(NMHttpClient               *self,
++nm_http_client_poll_req(NMHttpClient               *self,
+                         const char                 *uri,
+                         int                         request_timeout_ms,
+                         gssize                      request_max_data,
+@@ -527,13 +527,13 @@ nm_http_client_poll_get(NMHttpClient               *self,
+                         int                         ratelimit_timeout_ms,
+                         const char *const          *http_headers,
+                         GCancellable               *cancellable,
+-                        NMHttpClientPollGetCheckFcn check_fcn,
++                        NMHttpClientPollReqCheckFcn check_fcn,
+                         gpointer                    check_user_data,
+                         GAsyncReadyCallback         callback,
+                         gpointer                    user_data)
+ {
+     nm_auto_pop_gmaincontext GMainContext *context = NULL;
+-    PollGetData                           *poll_get_data;
++    PollReqData                           *poll_req_data;
+ 
+     g_return_if_fail(NM_IS_HTTP_CLIENT(self));
+     g_return_if_fail(uri && uri[0]);
+@@ -543,9 +543,9 @@ nm_http_client_poll_get(NMHttpClient               *self,
+     g_return_if_fail(ratelimit_timeout_ms >= -1);
+     g_return_if_fail(!cancellable || G_CANCELLABLE(cancellable));
+ 
+-    poll_get_data  = g_slice_new(PollGetData);
+-    *poll_get_data = (PollGetData){
+-        .task = nm_g_task_new(self, cancellable, nm_http_client_poll_get, callback, user_data),
++    poll_req_data  = g_slice_new(PollReqData);
++    *poll_req_data = (PollReqData){
++        .task = nm_g_task_new(self, cancellable, nm_http_client_poll_req, callback, user_data),
+         .uri  = g_strdup(uri),
+         .request_timeout_ms = request_timeout_ms,
+         .request_max_data   = request_max_data,
+@@ -556,13 +556,13 @@ nm_http_client_poll_get(NMHttpClient               *self,
+     };
+ 
+     if (http_headers) {
+-        poll_get_data->http_headers =
++        poll_req_data->http_headers =
+             nm_strv_dup_packed(http_headers, -1) ?: g_new(const char *, 1);
+     }
+ 
+-    nmcs_wait_for_objects_register(poll_get_data->task);
++    nmcs_wait_for_objects_register(poll_req_data->task);
+ 
+-    g_task_set_task_data(poll_get_data->task, poll_get_data, _poll_get_data_free);
++    g_task_set_task_data(poll_req_data->task, poll_req_data, _poll_req_data_free);
+ 
+     context =
+         nm_g_main_context_push_thread_default_if_necessary(nm_http_client_get_main_context(self));
+@@ -570,28 +570,28 @@ nm_http_client_poll_get(NMHttpClient               *self,
+     nmcs_utils_poll(poll_timeout_ms,
+                     ratelimit_timeout_ms,
+                     0,
+-                    _poll_get_probe_start_fcn,
+-                    _poll_get_probe_finish_fcn,
+-                    poll_get_data,
++                    _poll_req_probe_start_fcn,
++                    _poll_req_probe_finish_fcn,
++                    poll_req_data,
+                     cancellable,
+-                    _poll_get_done_cb,
+-                    poll_get_data);
++                    _poll_req_done_cb,
++                    poll_req_data);
+ }
+ 
+ gboolean
+-nm_http_client_poll_get_finish(NMHttpClient *self,
++nm_http_client_poll_req_finish(NMHttpClient *self,
+                                GAsyncResult *result,
+                                long         *out_response_code,
+                                GBytes      **out_response_data,
+                                GError      **error)
+ {
+-    PollGetData          *poll_get_data;
++    PollReqData          *poll_req_data;
+     GTask                *task;
+     gboolean              success;
+     gs_free_error GError *local_error = NULL;
+ 
+     g_return_val_if_fail(NM_HTTP_CLIENT(self), FALSE);
+-    g_return_val_if_fail(nm_g_task_is_valid(result, self, nm_http_client_poll_get), FALSE);
++    g_return_val_if_fail(nm_g_task_is_valid(result, self, nm_http_client_poll_req), FALSE);
+ 
+     task = G_TASK(result);
+ 
+@@ -606,10 +606,10 @@ nm_http_client_poll_get_finish(NMHttpClient *self,
+         return FALSE;
+     }
+ 
+-    poll_get_data = g_task_get_task_data(task);
++    poll_req_data = g_task_get_task_data(task);
+ 
+-    NM_SET_OUT(out_response_code, poll_get_data->response_code);
+-    NM_SET_OUT(out_response_data, g_steal_pointer(&poll_get_data->response_data));
++    NM_SET_OUT(out_response_code, poll_req_data->response_code);
++    NM_SET_OUT(out_response_data, g_steal_pointer(&poll_req_data->response_data));
+     return TRUE;
+ }
+ 
+diff --git a/src/nm-cloud-setup/nm-http-client.h b/src/nm-cloud-setup/nm-http-client.h
+index 6cc08ba97c..c8d3ffb458 100644
+--- a/src/nm-cloud-setup/nm-http-client.h
++++ b/src/nm-cloud-setup/nm-http-client.h
+@@ -27,12 +27,12 @@ GMainContext *nm_http_client_get_main_context(NMHttpClient *self);
+ 
+ /*****************************************************************************/
+ 
+-typedef gboolean (*NMHttpClientPollGetCheckFcn)(long     response_code,
++typedef gboolean (*NMHttpClientPollReqCheckFcn)(long     response_code,
+                                                 GBytes  *response_data,
+                                                 gpointer check_user_data,
+                                                 GError **error);
+ 
+-void nm_http_client_poll_get(NMHttpClient               *self,
++void nm_http_client_poll_req(NMHttpClient               *self,
+                              const char                 *uri,
+                              int                         request_timeout_ms,
+                              gssize                      request_max_data,
+@@ -40,12 +40,12 @@ void nm_http_client_poll_get(NMHttpClient               *self,
+                              int                         ratelimit_timeout_ms,
+                              const char *const          *http_headers,
+                              GCancellable               *cancellable,
+-                             NMHttpClientPollGetCheckFcn check_fcn,
++                             NMHttpClientPollReqCheckFcn check_fcn,
+                              gpointer                    check_user_data,
+                              GAsyncReadyCallback         callback,
+                              gpointer                    user_data);
+ 
+-gboolean nm_http_client_poll_get_finish(NMHttpClient *self,
++gboolean nm_http_client_poll_req_finish(NMHttpClient *self,
+                                         GAsyncResult *result,
+                                         long         *out_response_code,
+                                         GBytes      **out_response_data,
+diff --git a/src/nm-cloud-setup/nmcs-provider-aliyun.c b/src/nm-cloud-setup/nmcs-provider-aliyun.c
+index 34ab5ecc87..93f26e7505 100644
+--- a/src/nm-cloud-setup/nmcs-provider-aliyun.c
++++ b/src/nm-cloud-setup/nmcs-provider-aliyun.c
+@@ -77,7 +77,7 @@ _detect_get_meta_data_done_cb(GObject *source, GAsyncResult *result, gpointer us
+     gs_free_error GError  *get_error = NULL;
+     gs_free_error GError  *error     = NULL;
+ 
+-    nm_http_client_poll_get_finish(NM_HTTP_CLIENT(source), result, NULL, NULL, &get_error);
++    nm_http_client_poll_req_finish(NM_HTTP_CLIENT(source), result, NULL, NULL, &get_error);
+ 
+     if (nm_utils_error_is_cancelled(get_error)) {
+         g_task_return_error(task, g_steal_pointer(&get_error));
+@@ -104,7 +104,7 @@ detect(NMCSProvider *provider, GTask *task)
+ 
+     http_client = nmcs_provider_get_http_client(provider);
+ 
+-    nm_http_client_poll_get(http_client,
++    nm_http_client_poll_req(http_client,
+                             (uri = _aliyun_uri_concat(NM_ALIYUN_API_VERSION "/meta-data/")),
+                             HTTP_TIMEOUT_MS,
+                             256 * 1024,
+@@ -144,7 +144,7 @@ _get_config_fetch_done_cb(NMHttpClient                   *http_client,
+     gsize                  i;
+     gsize                  len;
+ 
+-    nm_http_client_poll_get_finish(http_client, result, NULL, &response, &error);
++    nm_http_client_poll_req_finish(http_client, result, NULL, &response, &error);
+ 
+     if (nm_utils_error_is_cancelled(error))
+         return;
+@@ -308,7 +308,7 @@ _get_config_metadata_ready_cb(GObject *source, GAsyncResult *result, gpointer us
+     GHashTableIter                 h_iter;
+     NMHttpClient                  *http_client;
+ 
+-    nm_http_client_poll_get_finish(NM_HTTP_CLIENT(source), result, NULL, NULL, &error);
++    nm_http_client_poll_req_finish(NM_HTTP_CLIENT(source), result, NULL, NULL, &error);
+ 
+     if (nm_utils_error_is_cancelled(error))
+         return;
+@@ -362,7 +362,7 @@ _get_config_metadata_ready_cb(GObject *source, GAsyncResult *result, gpointer us
+               v_mac_data->path);
+ 
+         get_config_data->n_pending++;
+-        nm_http_client_poll_get(
++        nm_http_client_poll_req(
+             http_client,
+             (uri1 = _aliyun_uri_interfaces(v_mac_data->path,
+                                            NM_STR_HAS_SUFFIX(v_mac_data->path, "/") ? "" : "/",
+@@ -379,7 +379,7 @@ _get_config_metadata_ready_cb(GObject *source, GAsyncResult *result, gpointer us
+             config_iface_data);
+ 
+         get_config_data->n_pending++;
+-        nm_http_client_poll_get(
++        nm_http_client_poll_req(
+             http_client,
+             (uri2 = _aliyun_uri_interfaces(v_mac_data->path,
+                                            NM_STR_HAS_SUFFIX(v_mac_data->path, "/") ? "" : "/",
+@@ -396,7 +396,7 @@ _get_config_metadata_ready_cb(GObject *source, GAsyncResult *result, gpointer us
+             config_iface_data);
+ 
+         get_config_data->n_pending++;
+-        nm_http_client_poll_get(
++        nm_http_client_poll_req(
+             http_client,
+             (uri3 = _aliyun_uri_interfaces(v_mac_data->path,
+                                            NM_STR_HAS_SUFFIX(v_mac_data->path, "/") ? "" : "/",
+@@ -413,7 +413,7 @@ _get_config_metadata_ready_cb(GObject *source, GAsyncResult *result, gpointer us
+             config_iface_data);
+ 
+         get_config_data->n_pending++;
+-        nm_http_client_poll_get(
++        nm_http_client_poll_req(
+             http_client,
+             (uri4 = _aliyun_uri_interfaces(v_mac_data->path,
+                                            NM_STR_HAS_SUFFIX(v_mac_data->path, "/") ? "" : "/",
+@@ -430,7 +430,7 @@ _get_config_metadata_ready_cb(GObject *source, GAsyncResult *result, gpointer us
+             config_iface_data);
+ 
+         get_config_data->n_pending++;
+-        nm_http_client_poll_get(
++        nm_http_client_poll_req(
+             http_client,
+             (uri5 = _aliyun_uri_interfaces(v_mac_data->path,
+                                            NM_STR_HAS_SUFFIX(v_mac_data->path, "/") ? "" : "/",
+@@ -530,7 +530,7 @@ get_config(NMCSProvider *provider, NMCSProviderGetConfigTaskData *get_config_dat
+      * MAC addresses, then we poll until we see them. They might not yet be
+      * around from the start...
+      */
+-    nm_http_client_poll_get(nmcs_provider_get_http_client(provider),
++    nm_http_client_poll_req(nmcs_provider_get_http_client(provider),
+                             (uri = _aliyun_uri_interfaces()),
+                             HTTP_TIMEOUT_MS,
+                             256 * 1024,
+diff --git a/src/nm-cloud-setup/nmcs-provider-azure.c b/src/nm-cloud-setup/nmcs-provider-azure.c
+index 9b27af288a..b1f48f5c18 100644
+--- a/src/nm-cloud-setup/nmcs-provider-azure.c
++++ b/src/nm-cloud-setup/nmcs-provider-azure.c
+@@ -42,7 +42,7 @@ _detect_get_meta_data_done_cb(GObject *source, GAsyncResult *result, gpointer us
+     gs_free_error GError  *get_error = NULL;
+     gs_free_error GError  *error     = NULL;
+ 
+-    nm_http_client_poll_get_finish(NM_HTTP_CLIENT(source), result, NULL, NULL, &get_error);
++    nm_http_client_poll_req_finish(NM_HTTP_CLIENT(source), result, NULL, NULL, &get_error);
+ 
+     if (nm_utils_error_is_cancelled(get_error)) {
+         g_task_return_error(task, g_steal_pointer(&get_error));
+@@ -69,7 +69,7 @@ detect(NMCSProvider *provider, GTask *task)
+ 
+     http_client = nmcs_provider_get_http_client(provider);
+ 
+-    nm_http_client_poll_get(http_client,
++    nm_http_client_poll_req(http_client,
+                             (uri = _azure_uri_concat("/metadata/instance")),
+                             HTTP_TIMEOUT_MS,
+                             256 * 1024,
+@@ -121,7 +121,7 @@ _get_config_fetch_done_cb(NMHttpClient      *http_client,
+     in_addr_t                       tmp_addr;
+     int                             tmp_prefix = -1;
+ 
+-    nm_http_client_poll_get_finish(http_client, result, NULL, &response, &error);
++    nm_http_client_poll_req_finish(http_client, result, NULL, &response, &error);
+ 
+     if (nm_utils_error_is_cancelled(error))
+         return;
+@@ -241,7 +241,7 @@ _get_config_ips_prefix_list_cb(GObject *source, GAsyncResult *result, gpointer u
+     gsize                          line_len;
+     char                           iface_idx_str[30];
+ 
+-    nm_http_client_poll_get_finish(NM_HTTP_CLIENT(source), result, NULL, &response, &error);
++    nm_http_client_poll_req_finish(NM_HTTP_CLIENT(source), result, NULL, &response, &error);
+ 
+     if (nm_utils_error_is_cancelled(error))
+         return;
+@@ -283,7 +283,7 @@ _get_config_ips_prefix_list_cb(GObject *source, GAsyncResult *result, gpointer u
+ 
+         iface_data->n_iface_data_pending++;
+ 
+-        nm_http_client_poll_get(
++        nm_http_client_poll_req(
+             NM_HTTP_CLIENT(source),
+             (uri = _azure_uri_interfaces(iface_idx_str,
+                                          "/ipv4/ipAddress/",
+@@ -308,7 +308,7 @@ _get_config_ips_prefix_list_cb(GObject *source, GAsyncResult *result, gpointer u
+         gs_free char *uri = NULL;
+ 
+         iface_data->n_iface_data_pending++;
+-        nm_http_client_poll_get(
++        nm_http_client_poll_req(
+             NM_HTTP_CLIENT(source),
+             (uri = _azure_uri_interfaces(iface_idx_str, "/ipv4/subnet/0/address/")),
+             HTTP_TIMEOUT_MS,
+@@ -325,7 +325,7 @@ _get_config_ips_prefix_list_cb(GObject *source, GAsyncResult *result, gpointer u
+         nm_clear_g_free(&uri);
+ 
+         iface_data->n_iface_data_pending++;
+-        nm_http_client_poll_get(
++        nm_http_client_poll_req(
+             NM_HTTP_CLIENT(source),
+             (uri = _azure_uri_interfaces(iface_idx_str, "/ipv4/subnet/0/prefix/")),
+             HTTP_TIMEOUT_MS,
+@@ -357,7 +357,7 @@ _get_config_iface_cb(GObject *source, GAsyncResult *result, gpointer user_data)
+     gs_free const char            *uri        = NULL;
+     char                           buf[100];
+ 
+-    nm_http_client_poll_get_finish(NM_HTTP_CLIENT(source), result, NULL, &response, &error);
++    nm_http_client_poll_req_finish(NM_HTTP_CLIENT(source), result, NULL, &response, &error);
+ 
+     if (nm_utils_error_is_cancelled(error))
+         return;
+@@ -408,7 +408,7 @@ _get_config_iface_cb(GObject *source, GAsyncResult *result, gpointer user_data)
+ 
+     nm_sprintf_buf(buf, "%" G_GSSIZE_FORMAT "/ipv4/ipAddress/", iface_data->intern_iface_idx);
+ 
+-    nm_http_client_poll_get(NM_HTTP_CLIENT(source),
++    nm_http_client_poll_req(NM_HTTP_CLIENT(source),
+                             (uri = _azure_uri_interfaces(buf)),
+                             HTTP_TIMEOUT_MS,
+                             512 * 1024,
+@@ -441,7 +441,7 @@ _get_net_ifaces_list_cb(GObject *source, GAsyncResult *result, gpointer user_dat
+     guint                          i;
+     gssize                         extern_iface_idx_cnt = 0;
+ 
+-    nm_http_client_poll_get_finish(NM_HTTP_CLIENT(source), result, NULL, &response, &error);
++    nm_http_client_poll_req_finish(NM_HTTP_CLIENT(source), result, NULL, &response, &error);
+ 
+     if (nm_utils_error_is_cancelled(error))
+         return;
+@@ -508,7 +508,7 @@ _get_net_ifaces_list_cb(GObject *source, GAsyncResult *result, gpointer user_dat
+         nm_sprintf_buf(buf, "%" G_GSSIZE_FORMAT "/macAddress", iface_data->intern_iface_idx);
+ 
+         get_config_data->n_pending++;
+-        nm_http_client_poll_get(NM_HTTP_CLIENT(source),
++        nm_http_client_poll_req(NM_HTTP_CLIENT(source),
+                                 (uri = _azure_uri_interfaces(buf)),
+                                 HTTP_TIMEOUT_MS,
+                                 512 * 1024,
+@@ -531,7 +531,7 @@ get_config(NMCSProvider *provider, NMCSProviderGetConfigTaskData *get_config_dat
+ {
+     gs_free const char *uri = NULL;
+ 
+-    nm_http_client_poll_get(nmcs_provider_get_http_client(provider),
++    nm_http_client_poll_req(nmcs_provider_get_http_client(provider),
+                             (uri = _azure_uri_interfaces()),
+                             HTTP_TIMEOUT_MS,
+                             256 * 1024,
+diff --git a/src/nm-cloud-setup/nmcs-provider-ec2.c b/src/nm-cloud-setup/nmcs-provider-ec2.c
+index d6fa03118d..35f7176c4d 100644
+--- a/src/nm-cloud-setup/nmcs-provider-ec2.c
++++ b/src/nm-cloud-setup/nmcs-provider-ec2.c
+@@ -72,7 +72,7 @@ _detect_get_meta_data_done_cb(GObject *source, GAsyncResult *result, gpointer us
+     gs_free_error GError  *get_error = NULL;
+     gs_free_error GError  *error     = NULL;
+ 
+-    nm_http_client_poll_get_finish(NM_HTTP_CLIENT(source), result, NULL, NULL, &get_error);
++    nm_http_client_poll_req_finish(NM_HTTP_CLIENT(source), result, NULL, NULL, &get_error);
+ 
+     if (nm_utils_error_is_cancelled(get_error)) {
+         g_task_return_error(task, g_steal_pointer(&get_error));
+@@ -99,7 +99,7 @@ detect(NMCSProvider *provider, GTask *task)
+ 
+     http_client = nmcs_provider_get_http_client(provider);
+ 
+-    nm_http_client_poll_get(http_client,
++    nm_http_client_poll_req(http_client,
+                             (uri = _ec2_uri_concat("latest/meta-data/")),
+                             HTTP_TIMEOUT_MS,
+                             256 * 1024,
+@@ -126,7 +126,7 @@ _get_config_fetch_done_cb(NMHttpClient                   *http_client,
+     in_addr_t              tmp_addr;
+     int                    tmp_prefix;
+ 
+-    nm_http_client_poll_get_finish(http_client, result, NULL, &response, &error);
++    nm_http_client_poll_req_finish(http_client, result, NULL, &response, &error);
+ 
+     if (nm_utils_error_is_cancelled(error))
+         return;
+@@ -204,7 +204,7 @@ _get_config_metadata_ready_cb(GObject *source, GAsyncResult *result, gpointer us
+     GHashTableIter                 h_iter;
+     NMHttpClient                  *http_client;
+ 
+-    nm_http_client_poll_get_finish(NM_HTTP_CLIENT(source), result, NULL, NULL, &error);
++    nm_http_client_poll_req_finish(NM_HTTP_CLIENT(source), result, NULL, NULL, &error);
+ 
+     if (nm_utils_error_is_cancelled(error))
+         return;
+@@ -254,7 +254,7 @@ _get_config_metadata_ready_cb(GObject *source, GAsyncResult *result, gpointer us
+               v_mac_data->path);
+ 
+         get_config_data->n_pending++;
+-        nm_http_client_poll_get(
++        nm_http_client_poll_req(
+             http_client,
+             (uri1 = _ec2_uri_interfaces(v_mac_data->path,
+                                         NM_STR_HAS_SUFFIX(v_mac_data->path, "/") ? "" : "/",
+@@ -271,7 +271,7 @@ _get_config_metadata_ready_cb(GObject *source, GAsyncResult *result, gpointer us
+             config_iface_data);
+ 
+         get_config_data->n_pending++;
+-        nm_http_client_poll_get(
++        nm_http_client_poll_req(
+             http_client,
+             (uri2 = _ec2_uri_interfaces(v_mac_data->path,
+                                         NM_STR_HAS_SUFFIX(v_mac_data->path, "/") ? "" : "/",
+@@ -371,7 +371,7 @@ get_config(NMCSProvider *provider, NMCSProviderGetConfigTaskData *get_config_dat
+      * MAC addresses, then we poll until we see them. They might not yet be
+      * around from the start...
+      */
+-    nm_http_client_poll_get(nmcs_provider_get_http_client(provider),
++    nm_http_client_poll_req(nmcs_provider_get_http_client(provider),
+                             (uri = _ec2_uri_interfaces()),
+                             HTTP_TIMEOUT_MS,
+                             256 * 1024,
+diff --git a/src/nm-cloud-setup/nmcs-provider-gcp.c b/src/nm-cloud-setup/nmcs-provider-gcp.c
+index a325f31a17..571c0fb826 100644
+--- a/src/nm-cloud-setup/nmcs-provider-gcp.c
++++ b/src/nm-cloud-setup/nmcs-provider-gcp.c
+@@ -45,7 +45,7 @@ _detect_get_meta_data_done_cb(GObject *source, GAsyncResult *result, gpointer us
+     gs_free_error GError  *get_error = NULL;
+     gs_free_error GError  *error     = NULL;
+ 
+-    nm_http_client_poll_get_finish(NM_HTTP_CLIENT(source), result, NULL, NULL, &get_error);
++    nm_http_client_poll_req_finish(NM_HTTP_CLIENT(source), result, NULL, NULL, &get_error);
+ 
+     if (nm_utils_error_is_cancelled(get_error)) {
+         g_task_return_error(task, g_steal_pointer(&get_error));
+@@ -72,7 +72,7 @@ detect(NMCSProvider *provider, GTask *task)
+ 
+     http_client = nmcs_provider_get_http_client(provider);
+ 
+-    nm_http_client_poll_get(http_client,
++    nm_http_client_poll_req(http_client,
+                             (uri = _gcp_uri_concat("id")),
+                             HTTP_TIMEOUT_MS,
+                             256 * 1024,
+@@ -114,7 +114,7 @@ _get_config_fip_cb(GObject *source, GAsyncResult *result, gpointer user_data)
+     NMIPRoute                     **routes_arr;
+     NMIPRoute                      *route_new;
+ 
+-    nm_http_client_poll_get_finish(NM_HTTP_CLIENT(source), result, NULL, &response, &error);
++    nm_http_client_poll_req_finish(NM_HTTP_CLIENT(source), result, NULL, &response, &error);
+ 
+     if (nm_utils_error_is_cancelled(error))
+         return;
+@@ -171,7 +171,7 @@ _get_config_ips_list_cb(GObject *source, GAsyncResult *result, gpointer user_dat
+     gsize                          line_len;
+     guint                          i;
+ 
+-    nm_http_client_poll_get_finish(NM_HTTP_CLIENT(source), result, NULL, &response, &error);
++    nm_http_client_poll_req_finish(NM_HTTP_CLIENT(source), result, NULL, &response, &error);
+ 
+     if (nm_utils_error_is_cancelled(error))
+         return;
+@@ -220,7 +220,7 @@ _get_config_ips_list_cb(GObject *source, GAsyncResult *result, gpointer user_dat
+         const char         *str = uri_arr->pdata[i];
+         gs_free const char *uri = NULL;
+ 
+-        nm_http_client_poll_get(NM_HTTP_CLIENT(source),
++        nm_http_client_poll_req(NM_HTTP_CLIENT(source),
+                                 (uri = _gcp_uri_interfaces(str)),
+                                 HTTP_TIMEOUT_MS,
+                                 HTTP_REQ_MAX_DATA,
+@@ -252,7 +252,7 @@ _get_config_iface_cb(GObject *source, GAsyncResult *result, gpointer user_data)
+     NMCSProviderGetConfigTaskData *get_config_data;
+     gboolean                       is_requested;
+ 
+-    nm_http_client_poll_get_finish(NM_HTTP_CLIENT(source), result, NULL, &response, &error);
++    nm_http_client_poll_req_finish(NM_HTTP_CLIENT(source), result, NULL, &response, &error);
+ 
+     if (nm_utils_error_is_cancelled(error))
+         return;
+@@ -306,7 +306,7 @@ _get_config_iface_cb(GObject *source, GAsyncResult *result, gpointer user_data)
+ 
+     nm_sprintf_buf(sbuf, "%" G_GSSIZE_FORMAT "/forwarded-ips/", iface_data->intern_iface_idx);
+ 
+-    nm_http_client_poll_get(NM_HTTP_CLIENT(source),
++    nm_http_client_poll_req(NM_HTTP_CLIENT(source),
+                             (uri = _gcp_uri_interfaces(sbuf)),
+                             HTTP_TIMEOUT_MS,
+                             HTTP_REQ_MAX_DATA,
+@@ -339,7 +339,7 @@ _get_net_ifaces_list_cb(GObject *source, GAsyncResult *result, gpointer user_dat
+     guint                          i;
+     gssize                         extern_iface_idx_cnt = 0;
+ 
+-    nm_http_client_poll_get_finish(NM_HTTP_CLIENT(source), result, NULL, &response, &error);
++    nm_http_client_poll_req_finish(NM_HTTP_CLIENT(source), result, NULL, &response, &error);
+ 
+     if (nm_utils_error_is_cancelled(error))
+         return;
+@@ -405,7 +405,7 @@ _get_net_ifaces_list_cb(GObject *source, GAsyncResult *result, gpointer user_dat
+         nm_sprintf_buf(sbuf, "%" G_GSSIZE_FORMAT "/mac", data->intern_iface_idx);
+ 
+         get_config_data->n_pending++;
+-        nm_http_client_poll_get(NM_HTTP_CLIENT(source),
++        nm_http_client_poll_req(NM_HTTP_CLIENT(source),
+                                 (uri = _gcp_uri_interfaces(sbuf)),
+                                 HTTP_TIMEOUT_MS,
+                                 HTTP_REQ_MAX_DATA,
+@@ -428,7 +428,7 @@ get_config(NMCSProvider *provider, NMCSProviderGetConfigTaskData *get_config_dat
+ {
+     gs_free const char *uri = NULL;
+ 
+-    nm_http_client_poll_get(nmcs_provider_get_http_client(provider),
++    nm_http_client_poll_req(nmcs_provider_get_http_client(provider),
+                             (uri = _gcp_uri_interfaces()),
+                             HTTP_TIMEOUT_MS,
+                             HTTP_REQ_MAX_DATA,
+-- 
+2.39.2
+
+
+From aaf66e9174eb04d2df1f45530ebdca16e77a6ec5 Mon Sep 17 00:00:00 2001
+From: Lubomir Rintel <lkundrak@v3.sk>
+Date: Mon, 27 Feb 2023 00:13:31 +0100
+Subject: [PATCH 4/7] cloud-setup: make nm_http_client_req() accept a method
+ argument
+
+We'll need to be able to issue PUT calls.
+
+(cherry picked from commit cd74d75002783a79d1a4fca24b2fbe99ced933a8)
+(cherry picked from commit eff4372045290ad380bddf03e5075ab671a7cff6)
+(cherry picked from commit aaf66e9174eb04d2df1f45530ebdca16e77a6ec5)
+---
+ src/nm-cloud-setup/nm-http-client.c       | 7 +++++++
+ src/nm-cloud-setup/nm-http-client.h       | 1 +
+ src/nm-cloud-setup/nmcs-provider-aliyun.c | 7 +++++++
+ src/nm-cloud-setup/nmcs-provider-azure.c  | 7 +++++++
+ src/nm-cloud-setup/nmcs-provider-ec2.c    | 4 ++++
+ src/nm-cloud-setup/nmcs-provider-gcp.c    | 5 +++++
+ 6 files changed, 31 insertions(+)
+
+diff --git a/src/nm-cloud-setup/nm-http-client.c b/src/nm-cloud-setup/nm-http-client.c
+index ed7914df8f..b3db93e058 100644
+--- a/src/nm-cloud-setup/nm-http-client.c
++++ b/src/nm-cloud-setup/nm-http-client.c
+@@ -262,6 +262,7 @@ nm_http_client_req(NMHttpClient       *self,
+                    int                 timeout_msec,
+                    gssize              max_data,
+                    const char *const  *http_headers,
++                   const char         *http_method,
+                    GCancellable       *cancellable,
+                    GAsyncReadyCallback callback,
+                    gpointer            user_data)
+@@ -328,6 +329,9 @@ nm_http_client_req(NMHttpClient       *self,
+         curl_easy_setopt(edata->ehandle, CURLOPT_HTTPHEADER, edata->headers);
+     }
+ 
++    if (http_method)
++        curl_easy_setopt(edata->ehandle, CURLOPT_CUSTOMREQUEST, http_method);
++
+     if (timeout_msec > 0) {
+         edata->timeout_source = _source_attach(self,
+                                                nm_g_timeout_source_new(timeout_msec,
+@@ -403,6 +407,7 @@ typedef struct {
+     GTask                      *task;
+     char                       *uri;
+     const char *const          *http_headers;
++    const char                 *http_method;
+     NMHttpClientPollReqCheckFcn check_fcn;
+     gpointer                    check_user_data;
+     GBytes                     *response_data;
+@@ -440,6 +445,7 @@ _poll_req_probe_start_fcn(GCancellable       *cancellable,
+                        poll_req_data->request_timeout_ms,
+                        poll_req_data->request_max_data,
+                        poll_req_data->http_headers,
++                       poll_req_data->http_method,
+                        cancellable,
+                        callback,
+                        user_data);
+@@ -526,6 +532,7 @@ nm_http_client_poll_req(NMHttpClient               *self,
+                         int                         poll_timeout_ms,
+                         int                         ratelimit_timeout_ms,
+                         const char *const          *http_headers,
++                        const char                 *http_method,
+                         GCancellable               *cancellable,
+                         NMHttpClientPollReqCheckFcn check_fcn,
+                         gpointer                    check_user_data,
+diff --git a/src/nm-cloud-setup/nm-http-client.h b/src/nm-cloud-setup/nm-http-client.h
+index c8d3ffb458..641efb1f47 100644
+--- a/src/nm-cloud-setup/nm-http-client.h
++++ b/src/nm-cloud-setup/nm-http-client.h
+@@ -39,6 +39,7 @@ void nm_http_client_poll_req(NMHttpClient               *self,
+                              int                         poll_timeout_ms,
+                              int                         ratelimit_timeout_ms,
+                              const char *const          *http_headers,
++                             const char                 *http_method,
+                              GCancellable               *cancellable,
+                              NMHttpClientPollReqCheckFcn check_fcn,
+                              gpointer                    check_user_data,
+diff --git a/src/nm-cloud-setup/nmcs-provider-aliyun.c b/src/nm-cloud-setup/nmcs-provider-aliyun.c
+index 93f26e7505..0500922058 100644
+--- a/src/nm-cloud-setup/nmcs-provider-aliyun.c
++++ b/src/nm-cloud-setup/nmcs-provider-aliyun.c
+@@ -111,6 +111,7 @@ detect(NMCSProvider *provider, GTask *task)
+                             7000,
+                             1000,
+                             NULL,
++                            NULL,
+                             g_task_get_cancellable(task),
+                             NULL,
+                             NULL,
+@@ -372,6 +373,7 @@ _get_config_metadata_ready_cb(GObject *source, GAsyncResult *result, gpointer us
+             10000,
+             1000,
+             NULL,
++            NULL,
+             get_config_data->intern_cancellable,
+             NULL,
+             NULL,
+@@ -389,6 +391,7 @@ _get_config_metadata_ready_cb(GObject *source, GAsyncResult *result, gpointer us
+             10000,
+             1000,
+             NULL,
++            NULL,
+             get_config_data->intern_cancellable,
+             NULL,
+             NULL,
+@@ -406,6 +409,7 @@ _get_config_metadata_ready_cb(GObject *source, GAsyncResult *result, gpointer us
+             10000,
+             1000,
+             NULL,
++            NULL,
+             get_config_data->intern_cancellable,
+             NULL,
+             NULL,
+@@ -423,6 +427,7 @@ _get_config_metadata_ready_cb(GObject *source, GAsyncResult *result, gpointer us
+             10000,
+             1000,
+             NULL,
++            NULL,
+             get_config_data->intern_cancellable,
+             NULL,
+             NULL,
+@@ -440,6 +445,7 @@ _get_config_metadata_ready_cb(GObject *source, GAsyncResult *result, gpointer us
+             10000,
+             1000,
+             NULL,
++            NULL,
+             get_config_data->intern_cancellable,
+             NULL,
+             NULL,
+@@ -537,6 +543,7 @@ get_config(NMCSProvider *provider, NMCSProviderGetConfigTaskData *get_config_dat
+                             15000,
+                             1000,
+                             NULL,
++                            NULL,
+                             get_config_data->intern_cancellable,
+                             _get_config_metadata_ready_check,
+                             get_config_data,
+diff --git a/src/nm-cloud-setup/nmcs-provider-azure.c b/src/nm-cloud-setup/nmcs-provider-azure.c
+index b1f48f5c18..e74d042026 100644
+--- a/src/nm-cloud-setup/nmcs-provider-azure.c
++++ b/src/nm-cloud-setup/nmcs-provider-azure.c
+@@ -76,6 +76,7 @@ detect(NMCSProvider *provider, GTask *task)
+                             7000,
+                             1000,
+                             NM_MAKE_STRV(NM_AZURE_METADATA_HEADER),
++                            NULL,
+                             g_task_get_cancellable(task),
+                             NULL,
+                             NULL,
+@@ -294,6 +295,7 @@ _get_config_ips_prefix_list_cb(GObject *source, GAsyncResult *result, gpointer u
+             10000,
+             1000,
+             NM_MAKE_STRV(NM_AZURE_METADATA_HEADER),
++            NULL,
+             get_config_data->intern_cancellable,
+             NULL,
+             NULL,
+@@ -316,6 +318,7 @@ _get_config_ips_prefix_list_cb(GObject *source, GAsyncResult *result, gpointer u
+             10000,
+             1000,
+             NM_MAKE_STRV(NM_AZURE_METADATA_HEADER),
++            NULL,
+             get_config_data->intern_cancellable,
+             NULL,
+             NULL,
+@@ -333,6 +336,7 @@ _get_config_ips_prefix_list_cb(GObject *source, GAsyncResult *result, gpointer u
+             10000,
+             1000,
+             NM_MAKE_STRV(NM_AZURE_METADATA_HEADER),
++            NULL,
+             get_config_data->intern_cancellable,
+             NULL,
+             NULL,
+@@ -415,6 +419,7 @@ _get_config_iface_cb(GObject *source, GAsyncResult *result, gpointer user_data)
+                             10000,
+                             1000,
+                             NM_MAKE_STRV(NM_AZURE_METADATA_HEADER),
++                            NULL,
+                             get_config_data->intern_cancellable,
+                             NULL,
+                             NULL,
+@@ -515,6 +520,7 @@ _get_net_ifaces_list_cb(GObject *source, GAsyncResult *result, gpointer user_dat
+                                 10000,
+                                 1000,
+                                 NM_MAKE_STRV(NM_AZURE_METADATA_HEADER),
++                                NULL,
+                                 get_config_data->intern_cancellable,
+                                 NULL,
+                                 NULL,
+@@ -538,6 +544,7 @@ get_config(NMCSProvider *provider, NMCSProviderGetConfigTaskData *get_config_dat
+                             15000,
+                             1000,
+                             NM_MAKE_STRV(NM_AZURE_METADATA_HEADER),
++                            NULL,
+                             get_config_data->intern_cancellable,
+                             NULL,
+                             NULL,
+diff --git a/src/nm-cloud-setup/nmcs-provider-ec2.c b/src/nm-cloud-setup/nmcs-provider-ec2.c
+index 35f7176c4d..c3c527cfd4 100644
+--- a/src/nm-cloud-setup/nmcs-provider-ec2.c
++++ b/src/nm-cloud-setup/nmcs-provider-ec2.c
+@@ -106,6 +106,7 @@ detect(NMCSProvider *provider, GTask *task)
+                             7000,
+                             1000,
+                             NULL,
++                            NULL,
+                             g_task_get_cancellable(task),
+                             _detect_get_meta_data_check_cb,
+                             NULL,
+@@ -264,6 +265,7 @@ _get_config_metadata_ready_cb(GObject *source, GAsyncResult *result, gpointer us
+             10000,
+             1000,
+             NULL,
++            NULL,
+             get_config_data->intern_cancellable,
+             NULL,
+             NULL,
+@@ -281,6 +283,7 @@ _get_config_metadata_ready_cb(GObject *source, GAsyncResult *result, gpointer us
+             10000,
+             1000,
+             NULL,
++            NULL,
+             get_config_data->intern_cancellable,
+             NULL,
+             NULL,
+@@ -378,6 +381,7 @@ get_config(NMCSProvider *provider, NMCSProviderGetConfigTaskData *get_config_dat
+                             15000,
+                             1000,
+                             NULL,
++                            NULL,
+                             get_config_data->intern_cancellable,
+                             _get_config_metadata_ready_check,
+                             get_config_data,
+diff --git a/src/nm-cloud-setup/nmcs-provider-gcp.c b/src/nm-cloud-setup/nmcs-provider-gcp.c
+index 571c0fb826..ca354865dd 100644
+--- a/src/nm-cloud-setup/nmcs-provider-gcp.c
++++ b/src/nm-cloud-setup/nmcs-provider-gcp.c
+@@ -79,6 +79,7 @@ detect(NMCSProvider *provider, GTask *task)
+                             7000,
+                             1000,
+                             NM_MAKE_STRV(NM_GCP_METADATA_HEADER),
++                            NULL,
+                             g_task_get_cancellable(task),
+                             NULL,
+                             NULL,
+@@ -227,6 +228,7 @@ _get_config_ips_list_cb(GObject *source, GAsyncResult *result, gpointer user_dat
+                                 HTTP_POLL_TIMEOUT_MS,
+                                 HTTP_RATE_LIMIT_MS,
+                                 NM_MAKE_STRV(NM_GCP_METADATA_HEADER),
++                                NULL,
+                                 get_config_data->intern_cancellable,
+                                 NULL,
+                                 NULL,
+@@ -313,6 +315,7 @@ _get_config_iface_cb(GObject *source, GAsyncResult *result, gpointer user_data)
+                             HTTP_POLL_TIMEOUT_MS,
+                             HTTP_RATE_LIMIT_MS,
+                             NM_MAKE_STRV(NM_GCP_METADATA_HEADER),
++                            NULL,
+                             get_config_data->intern_cancellable,
+                             NULL,
+                             NULL,
+@@ -412,6 +415,7 @@ _get_net_ifaces_list_cb(GObject *source, GAsyncResult *result, gpointer user_dat
+                                 HTTP_POLL_TIMEOUT_MS,
+                                 HTTP_RATE_LIMIT_MS,
+                                 NM_MAKE_STRV(NM_GCP_METADATA_HEADER),
++                                NULL,
+                                 get_config_data->intern_cancellable,
+                                 NULL,
+                                 NULL,
+@@ -435,6 +439,7 @@ get_config(NMCSProvider *provider, NMCSProviderGetConfigTaskData *get_config_dat
+                             HTTP_POLL_TIMEOUT_MS,
+                             HTTP_RATE_LIMIT_MS,
+                             NM_MAKE_STRV(NM_GCP_METADATA_HEADER),
++                            NULL,
+                             get_config_data->intern_cancellable,
+                             NULL,
+                             NULL,
+-- 
+2.39.2
+
+
+From 06fc0ef35dc7e5e6295ab9beecba6071e556d55e Mon Sep 17 00:00:00 2001
+From: Lubomir Rintel <lkundrak@v3.sk>
+Date: Tue, 7 Mar 2023 13:51:57 +0100
+Subject: [PATCH 5/7] cloud-setup: document detect() and get_config() methods
+
+Clarify that detect() needs to succeed before get_config().
+
+I thought it's sort of common sense, but it's better to be explicit as
+we're going to rely on that.
+
+(cherry picked from commit 088bfd817ab5eb8aa0fb9cffe52fa3f456030ecc)
+(cherry picked from commit d99864ccba6d7c9bac66dcbbcc49c01be0ddd719)
+(cherry picked from commit 06fc0ef35dc7e5e6295ab9beecba6071e556d55e)
+---
+ src/nm-cloud-setup/nmcs-provider.h | 28 ++++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/src/nm-cloud-setup/nmcs-provider.h b/src/nm-cloud-setup/nmcs-provider.h
+index 502f1d0323..3662fbe391 100644
+--- a/src/nm-cloud-setup/nmcs-provider.h
++++ b/src/nm-cloud-setup/nmcs-provider.h
+@@ -152,8 +152,36 @@ typedef struct {
+     const char  *_name;
+     const char  *_env_provider_enabled;
+ 
++    /**
++     * detect:
++     * @self: the #NMCSProvider
++     * @task: a #GTask that's completed when the detection finishes.
++     *
++     * Checks whether the metadata of a particular cloud provider is
++     * accessible on the host machine. The check runs asynchronously.
++     *
++     * When the check finishes, @task is completed. If the check was
++     * successful, @task returns a gboolean of %TRUE. Otherwise
++     * a %FALSE value or an error is returned.
++     *
++     * The routine has to be called before the get_config() can be
++     * used.
++     */
+     void (*detect)(NMCSProvider *self, GTask *task);
+ 
++    /**
++     * get_config:
++     * @self: the #NMCSProvider
++     * @get_config_data: encapsulates a #GTask and network configuration data
++     *
++     * Collects the network configuration from metadata service of a
++     * particular cloud provider. The metadata is traversed and checked
++     * asynchronously, completing a task encapsulated in @get_config_data
++     * upon finishing.
++     *
++     * Call to detect() with a successful result is necessary before
++     * using this routine.
++     */
+     void (*get_config)(NMCSProvider *self, NMCSProviderGetConfigTaskData *get_config_data);
+ 
+ } NMCSProviderClass;
+-- 
+2.39.2
+
+
+From e3ac982b32361105708d489a73eaed2bc4dc5f9f Mon Sep 17 00:00:00 2001
+From: Lubomir Rintel <lkundrak@v3.sk>
+Date: Mon, 27 Feb 2023 00:15:11 +0100
+Subject: [PATCH 6/7] cloud-setup/ec2: start with requesting a IMDSv2 token
+
+The present version of the EC2 metadata API (IMDSv2) requires a header
+with a token to be present in all requests. The token is essentially a
+cookie that's not actually a cookie that's obtained with a PUT call that
+doesn't put anything. Apparently it's too easy to trick someone into
+calling a GET method.
+
+EC2 now supports IMDSv2 everywhere with IMDSv1 being optional, so let's
+just use IMDSv2 unconditionally. Also, the presence of a token API can
+be used to detect the AWS EC2 cloud.
+
+https://bugzilla.redhat.com/show_bug.cgi?id=2151986
+(cherry picked from commit 8b7e12c2d631c47292258c29429cd565715ea186)
+(cherry picked from commit 429f36cd81ddbe337f04c09a352fd78cd29e394d)
+(cherry picked from commit e3ac982b32361105708d489a73eaed2bc4dc5f9f)
+---
+ src/nm-cloud-setup/nmcs-provider-ec2.c | 74 +++++++++++++++++++-------
+ 1 file changed, 54 insertions(+), 20 deletions(-)
+
+diff --git a/src/nm-cloud-setup/nmcs-provider-ec2.c b/src/nm-cloud-setup/nmcs-provider-ec2.c
+index c3c527cfd4..3a27a30e68 100644
+--- a/src/nm-cloud-setup/nmcs-provider-ec2.c
++++ b/src/nm-cloud-setup/nmcs-provider-ec2.c
+@@ -16,6 +16,11 @@
+ #define NM_EC2_METADATA_URL_BASE /* $NM_EC2_BASE/$NM_EC2_API_VERSION */ \
+     "/meta-data/network/interfaces/macs/"
+ 
++/* Token TTL of 180 seconds is chosen abitrarily, in hope that it is
++ * surely more than enough to read all relevant metadata. */
++#define NM_EC2_TOKEN_TTL_HEADER "X-aws-ec2-metadata-token-ttl-seconds: 180"
++#define NM_EC2_TOKEN_HEADER     "X-aws-ec2-metadata-token: "
++
+ static const char *
+ _ec2_base(void)
+ {
+@@ -44,8 +49,15 @@ again:
+ 
+ /*****************************************************************************/
+ 
++enum {
++    NM_EC2_HTTP_HEADER_TOKEN,
++    NM_EC2_HTTP_HEADER_SENTINEL,
++    _NM_EC2_HTTP_HEADER_NUM,
++};
++
+ struct _NMCSProviderEC2 {
+     NMCSProvider parent;
++    char        *token;
+ };
+ 
+ struct _NMCSProviderEC2Class {
+@@ -56,23 +68,18 @@ G_DEFINE_TYPE(NMCSProviderEC2, nmcs_provider_ec2, NMCS_TYPE_PROVIDER);
+ 
+ /*****************************************************************************/
+ 
+-static gboolean
+-_detect_get_meta_data_check_cb(long     response_code,
+-                               GBytes  *response,
+-                               gpointer check_user_data,
+-                               GError **error)
+-{
+-    return response_code == 200 && nmcs_utils_parse_get_full_line(response, "ami-id");
+-}
+-
+ static void
+-_detect_get_meta_data_done_cb(GObject *source, GAsyncResult *result, gpointer user_data)
++_detect_get_token_done_cb(GObject *source, GAsyncResult *result, gpointer user_data)
+ {
+     gs_unref_object GTask *task      = user_data;
++    NMCSProviderEC2       *self      = NMCS_PROVIDER_EC2(g_task_get_source_object(task));
++    gs_unref_bytes GBytes *response  = NULL;
+     gs_free_error GError  *get_error = NULL;
+     gs_free_error GError  *error     = NULL;
+ 
+-    nm_http_client_poll_req_finish(NM_HTTP_CLIENT(source), result, NULL, NULL, &get_error);
++    nm_clear_g_free(&self->token);
++
++    nm_http_client_poll_req_finish(NM_HTTP_CLIENT(source), result, NULL, &response, &get_error);
+ 
+     if (nm_utils_error_is_cancelled(get_error)) {
+         g_task_return_error(task, g_steal_pointer(&get_error));
+@@ -88,6 +95,12 @@ _detect_get_meta_data_done_cb(GObject *source, GAsyncResult *result, gpointer us
+         return;
+     }
+ 
++    /* We use the token as-is. Special characters can cause confusion (e.g.
++     * response splitting), but we're not crossing a security boundary.
++     * None of the examples in AWS documentation does any sort of
++     * sanitization either.  */
++    self->token = g_strconcat(NM_EC2_TOKEN_HEADER, g_bytes_get_data(response, NULL), NULL);
++
+     g_task_return_boolean(task, TRUE);
+ }
+ 
+@@ -100,17 +113,17 @@ detect(NMCSProvider *provider, GTask *task)
+     http_client = nmcs_provider_get_http_client(provider);
+ 
+     nm_http_client_poll_req(http_client,
+-                            (uri = _ec2_uri_concat("latest/meta-data/")),
++                            (uri = _ec2_uri_concat("latest/api/token")),
+                             HTTP_TIMEOUT_MS,
+                             256 * 1024,
+                             7000,
+                             1000,
+-                            NULL,
+-                            NULL,
++                            NM_MAKE_STRV(NM_EC2_TOKEN_TTL_HEADER),
++                            "PUT",
+                             g_task_get_cancellable(task),
+-                            _detect_get_meta_data_check_cb,
+                             NULL,
+-                            _detect_get_meta_data_done_cb,
++                            NULL,
++                            _detect_get_token_done_cb,
+                             task);
+ }
+ 
+@@ -198,6 +211,7 @@ static void
+ _get_config_metadata_ready_cb(GObject *source, GAsyncResult *result, gpointer user_data)
+ {
+     NMCSProviderGetConfigTaskData *get_config_data;
++    NMCSProviderEC2               *self;
+     gs_unref_hashtable GHashTable *response_parsed = NULL;
+     gs_free_error GError          *error           = NULL;
+     GetConfigMetadataMac          *v_mac_data;
+@@ -211,6 +225,7 @@ _get_config_metadata_ready_cb(GObject *source, GAsyncResult *result, gpointer us
+         return;
+ 
+     get_config_data = user_data;
++    self            = NMCS_PROVIDER_EC2(get_config_data->self);
+ 
+     response_parsed                     = g_steal_pointer(&get_config_data->extra_data);
+     get_config_data->extra_data_destroy = NULL;
+@@ -264,7 +279,7 @@ _get_config_metadata_ready_cb(GObject *source, GAsyncResult *result, gpointer us
+             512 * 1024,
+             10000,
+             1000,
+-            NULL,
++            NM_MAKE_STRV(self->token),
+             NULL,
+             get_config_data->intern_cancellable,
+             NULL,
+@@ -282,7 +297,7 @@ _get_config_metadata_ready_cb(GObject *source, GAsyncResult *result, gpointer us
+             512 * 1024,
+             10000,
+             1000,
+-            NULL,
++            NM_MAKE_STRV(self->token),
+             NULL,
+             get_config_data->intern_cancellable,
+             NULL,
+@@ -368,7 +383,13 @@ _get_config_metadata_ready_check(long     response_code,
+ static void
+ get_config(NMCSProvider *provider, NMCSProviderGetConfigTaskData *get_config_data)
+ {
+-    gs_free char *uri = NULL;
++    NMCSProviderEC2 *self = NMCS_PROVIDER_EC2(provider);
++    gs_free char    *uri  = NULL;
++
++    /* This can be called only if detect() succeeded, which implies
++     * there must be a token.
++     */
++    nm_assert(self->token);
+ 
+     /* First we fetch the "macs/". If the caller requested some particular
+      * MAC addresses, then we poll until we see them. They might not yet be
+@@ -380,7 +401,7 @@ get_config(NMCSProvider *provider, NMCSProviderGetConfigTaskData *get_config_dat
+                             256 * 1024,
+                             15000,
+                             1000,
+-                            NULL,
++                            NM_MAKE_STRV(self->token),
+                             NULL,
+                             get_config_data->intern_cancellable,
+                             _get_config_metadata_ready_check,
+@@ -395,11 +416,24 @@ static void
+ nmcs_provider_ec2_init(NMCSProviderEC2 *self)
+ {}
+ 
++static void
++dispose(GObject *object)
++{
++    NMCSProviderEC2 *self = NMCS_PROVIDER_EC2(object);
++
++    nm_clear_g_free(&self->token);
++
++    G_OBJECT_CLASS(nmcs_provider_ec2_parent_class)->dispose(object);
++}
++
+ static void
+ nmcs_provider_ec2_class_init(NMCSProviderEC2Class *klass)
+ {
++    GObjectClass      *object_class   = G_OBJECT_CLASS(klass);
+     NMCSProviderClass *provider_class = NMCS_PROVIDER_CLASS(klass);
+ 
++    object_class->dispose = dispose;
++
+     provider_class->_name                 = "ec2";
+     provider_class->_env_provider_enabled = NMCS_ENV_VARIABLE("NM_CLOUD_SETUP_EC2");
+     provider_class->detect                = detect;
+-- 
+2.39.2
+
+
+From 6abbdaaa64bad00acb65ba7049dcea6bb7ae1084 Mon Sep 17 00:00:00 2001
+From: Lubomir Rintel <lkundrak@v3.sk>
+Date: Tue, 21 Mar 2023 22:47:27 +0100
+Subject: [PATCH 7/7] cloud-setup: actually pass the HTTP method in
+ nm_http_client_poll_req()
+
+https://bugzilla.redhat.com/show_bug.cgi?id=2179718
+https://bugzilla.redhat.com/show_bug.cgi?id=2181466
+
+Fixes: 8b7e12c2d631 ('cloud-setup/ec2: start with requesting a IMDSv2 token')
+Fixes: cd74d7500278 ('cloud-setup: make nm_http_client_req() accept a method argument')
+(cherry picked from commit f07da04cd9f16ac9e90d3d57d970ac935ad87b4d)
+(cherry picked from commit d787c0c59dce57dfacc6602a4f1d5f8d8ed3b193)
+(cherry picked from commit 6abbdaaa64bad00acb65ba7049dcea6bb7ae1084)
+---
+ src/nm-cloud-setup/nm-http-client.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/nm-cloud-setup/nm-http-client.c b/src/nm-cloud-setup/nm-http-client.c
+index b3db93e058..db123f1033 100644
+--- a/src/nm-cloud-setup/nm-http-client.c
++++ b/src/nm-cloud-setup/nm-http-client.c
+@@ -290,7 +290,7 @@ nm_http_client_req(NMHttpClient       *self,
+ 
+     nmcs_wait_for_objects_register(edata->task);
+ 
+-    _LOG2D(edata, "start get ...");
++    _LOG2D(edata, "start %s ...", http_method ?: "get");
+ 
+     edata->ehandle = curl_easy_init();
+     if (!edata->ehandle) {
+@@ -560,6 +560,7 @@ nm_http_client_poll_req(NMHttpClient               *self,
+         .check_user_data    = check_user_data,
+         .response_code      = -1,
+         .http_headers       = NULL,
++        .http_method        = http_method,
+     };
+ 
+     if (http_headers) {
+-- 
+2.39.2
+

@@ -1,0 +1,190 @@
+From 1e74f06a69d0f01753d6f2f071202a41b92239bc Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Wed, 31 May 2023 13:06:22 +0200
+Subject: [PATCH 1/2] cloud-setup: fix terminating in the middle of
+ reconfiguring the system
+
+Once we start reconfiguring the system, we need to finish on all
+interfaces. Otherwise, we might reconfigure some interfaces, abort
+and leave the network broken. When that happens, a subsequent run
+might also be unable to recover, because we are unable to reach the
+HTTP meta data service.
+
+https://bugzilla.redhat.com/show_bug.cgi?id=2207812
+
+Fixes: 69f048bf0ca3 ('cloud-setup: add tool for automatic IP configuration in cloud')
+(cherry picked from commit dab114f038f39e07080f71426d70e84449890088)
+(cherry picked from commit 0a033798ac646c80669ab5d8a15362583f4d8ba4)
+(cherry picked from commit fe243025e5751dda2e5a3694953f92c87372e008)
+---
+ src/nm-cloud-setup/main.c | 49 ++++++++++++++++++++++++++-------------
+ 1 file changed, 33 insertions(+), 16 deletions(-)
+
+diff --git a/src/nm-cloud-setup/main.c b/src/nm-cloud-setup/main.c
+index e1cbd1d4d8..01e41bd72e 100644
+--- a/src/nm-cloud-setup/main.c
++++ b/src/nm-cloud-setup/main.c
+@@ -15,6 +15,12 @@
+ 
+ /*****************************************************************************/
+ 
++typedef struct {
++    GCancellable *cancellable;
++    gboolean      enabled;
++    gboolean      signal_received;
++} SigTermData;
++
+ typedef struct {
+     GMainLoop    *main_loop;
+     GCancellable *cancellable;
+@@ -444,7 +450,7 @@ _nmc_mangle_connection(NMDevice                             *device,
+ /*****************************************************************************/
+ 
+ static gboolean
+-_config_one(GCancellable                      *sigterm_cancellable,
++_config_one(SigTermData                       *sigterm_data,
+             NMClient                          *nmc,
+             const NMCSProviderGetConfigResult *result,
+             guint                              idx)
+@@ -464,7 +470,7 @@ _config_one(GCancellable                      *sigterm_cancellable,
+ 
+     g_main_context_iteration(NULL, FALSE);
+ 
+-    if (g_cancellable_is_cancelled(sigterm_cancellable))
++    if (g_cancellable_is_cancelled(sigterm_data->cancellable))
+         return FALSE;
+ 
+     device = nm_g_object_ref(_nmc_get_device_by_hwaddr(nmc, hwaddr));
+@@ -498,7 +504,7 @@ try_again:
+     g_clear_error(&error);
+ 
+     applied_connection = nmcs_device_get_applied_connection(device,
+-                                                            sigterm_cancellable,
++                                                            sigterm_data->cancellable,
+                                                             &applied_version_id,
+                                                             &error);
+     if (!applied_connection) {
+@@ -560,8 +566,12 @@ try_again:
+      * during package upgrade. */
+     maybe_no_preserved_external_ip = TRUE;
+ 
++    /* Once we start reconfiguring the system, we cannot abort in the middle. From now on,
++     * any SIGTERM gets ignored until we are done.  */
++    sigterm_data->enabled = FALSE;
++
+     if (!nmcs_device_reapply(device,
+-                             sigterm_cancellable,
++                             NULL,
+                              applied_connection,
+                              applied_version_id,
+                              maybe_no_preserved_external_ip,
+@@ -592,15 +602,13 @@ try_again:
+ }
+ 
+ static gboolean
+-_config_all(GCancellable                      *sigterm_cancellable,
+-            NMClient                          *nmc,
+-            const NMCSProviderGetConfigResult *result)
++_config_all(SigTermData *sigterm_data, NMClient *nmc, const NMCSProviderGetConfigResult *result)
+ {
+     gboolean any_changes = FALSE;
+     guint    i;
+ 
+     for (i = 0; i < result->n_iface_datas; i++) {
+-        if (_config_one(sigterm_cancellable, nmc, result, i))
++        if (_config_one(sigterm_data, nmc, result, i))
+             any_changes = TRUE;
+     }
+ 
+@@ -612,13 +620,16 @@ _config_all(GCancellable                      *sigterm_cancellable,
+ static gboolean
+ sigterm_handler(gpointer user_data)
+ {
+-    GCancellable *sigterm_cancellable = user_data;
++    SigTermData *sigterm_data = user_data;
+ 
+-    if (!g_cancellable_is_cancelled(sigterm_cancellable)) {
+-        _LOGD("SIGTERM received");
+-        g_cancellable_cancel(user_data);
+-    } else
+-        _LOGD("SIGTERM received (again)");
++    _LOGD("SIGTERM received (%s) (%s)",
++          sigterm_data->signal_received ? "first time" : "again",
++          sigterm_data->enabled ? "cancel operation" : "ignore");
++
++    sigterm_data->signal_received = TRUE;
++
++    if (sigterm_data->enabled)
++        g_cancellable_cancel(sigterm_data->cancellable);
+     return G_SOURCE_CONTINUE;
+ }
+ 
+@@ -633,6 +644,7 @@ main(int argc, const char *const *argv)
+     gs_unref_object NMClient                  *nmc                                   = NULL;
+     nm_auto_free_nmcs_provider_get_config_result NMCSProviderGetConfigResult *result = NULL;
+     gs_free_error GError                                                     *error  = NULL;
++    SigTermData                                                               sigterm_data;
+ 
+     _nm_logging_enabled_init(g_getenv(NMCS_ENV_VARIABLE("NM_CLOUD_SETUP_LOG")));
+ 
+@@ -645,7 +657,12 @@ main(int argc, const char *const *argv)
+ 
+     sigterm_cancellable = g_cancellable_new();
+ 
+-    sigterm_source = nm_g_unix_signal_add_source(SIGTERM, sigterm_handler, sigterm_cancellable);
++    sigterm_data = (SigTermData){
++        .cancellable     = sigterm_cancellable,
++        .enabled         = TRUE,
++        .signal_received = FALSE,
++    };
++    sigterm_source = nm_g_unix_signal_add_source(SIGTERM, sigterm_handler, &sigterm_data);
+ 
+     provider = _provider_detect(sigterm_cancellable);
+     if (!provider)
+@@ -676,7 +693,7 @@ main(int argc, const char *const *argv)
+     if (!result)
+         goto done;
+ 
+-    if (_config_all(sigterm_cancellable, nmc, result))
++    if (_config_all(&sigterm_data, nmc, result))
+         _LOGI("some changes were applied for provider %s", nmcs_provider_get_name(provider));
+     else
+         _LOGD("no changes were applied for provider %s", nmcs_provider_get_name(provider));
+-- 
+2.40.1
+
+From 1d148ee9592e1292a62f1d932c85d4ca94e9d642 Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Mon, 5 Jun 2023 13:04:53 +0200
+Subject: [PATCH 2/2] cloud-setup: clear error variable in
+ nmcs_device_reapply()
+
+This is rather bad, because if we reach the "goto again" case,
+the error variable is not cleared. Subsequently passing the
+error location to nm_device_reapply_finish() will trigger a glib
+warning.
+
+Fixes: 29b0420be72f ('nm-cloud-setup: set preserve-external-ip flag during reapply')
+(cherry picked from commit c70a5470be034c660b426ebdbef9e8e67609ece7)
+(cherry picked from commit 98be3dd5acafa88e7477dcbb9d6420cb2e73ec01)
+(cherry picked from commit 5cc38d1c6b1d76b1fa93cba021cf6a5472f12fa4)
+---
+ src/nm-cloud-setup/nm-cloud-setup-utils.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/src/nm-cloud-setup/nm-cloud-setup-utils.c b/src/nm-cloud-setup/nm-cloud-setup-utils.c
+index 7cf7959241..1410ecf7c1 100644
+--- a/src/nm-cloud-setup/nm-cloud-setup-utils.c
++++ b/src/nm-cloud-setup/nm-cloud-setup-utils.c
+@@ -833,6 +833,8 @@ nmcs_device_reapply(NMDevice     *device,
+     NMDeviceReapplyFlags reapply_flags = NM_DEVICE_REAPPLY_FLAGS_PRESERVE_EXTERNAL_IP;
+ 
+ again:
++    g_clear_error(&data.error);
++
+     nm_device_reapply_async(device,
+                             connection,
+                             version_id,
+-- 
+2.40.1
+

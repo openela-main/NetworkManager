@@ -1,7 +1,7 @@
-From 2695396939d2a867145f7db569aaf5cc6b0d742c Mon Sep 17 00:00:00 2001
+From 04c0fffdc3a24b66fcfd2e55714bc1308c219c24 Mon Sep 17 00:00:00 2001
 From: Gris Ge <fge@redhat.com>
 Date: Tue, 27 Jun 2023 15:02:54 +0800
-Subject: [PATCH] setting-connection: Unblock autoconnect upon finish of
+Subject: [PATCH 1/1] setting-connection: Unblock autoconnect upon finish of
  `Reapply`
 
 The activation of a connection will clear the block of autoconnect,
@@ -10,15 +10,16 @@ we should do the same for reapply.
 Signed-off-by: Gris Ge <fge@redhat.com>
 (cherry picked from commit 0486efd3584c70179072f611e63b9c0ff6851b80)
 (cherry picked from commit 18ce5f43bd16b3cc394424619652c782cb3795c3)
+(cherry picked from commit 2695396939d2a867145f7db569aaf5cc6b0d742c)
 ---
  src/core/devices/nm-device.c | 9 +++++++++
  1 file changed, 9 insertions(+)
 
 diff --git a/src/core/devices/nm-device.c b/src/core/devices/nm-device.c
-index 5a7c3faba7..dc746131ef 100644
+index 31acc1c1fe6b..2ac55fa83cbe 100644
 --- a/src/core/devices/nm-device.c
 +++ b/src/core/devices/nm-device.c
-@@ -12836,6 +12836,7 @@ check_and_reapply_connection(NMDevice            *self,
+@@ -12826,6 +12826,7 @@ check_and_reapply_connection(NMDevice            *self,
      NMConnection                  *con_old;
      NMConnection                  *con_new;
      GHashTableIter                 iter;
@@ -26,7 +27,7 @@ index 5a7c3faba7..dc746131ef 100644
  
      if (priv->state < NM_DEVICE_STATE_PREPARE || priv->state > NM_DEVICE_STATE_ACTIVATED) {
          g_set_error_literal(error,
-@@ -13008,6 +13009,14 @@ check_and_reapply_connection(NMDevice            *self,
+@@ -12998,6 +12999,14 @@ check_and_reapply_connection(NMDevice            *self,
      if (priv->state >= NM_DEVICE_STATE_ACTIVATED)
          nm_device_update_metered(self);
  
@@ -42,5 +43,5 @@ index 5a7c3faba7..dc746131ef 100644
  }
  
 -- 
-2.39.3
+2.40.1
 

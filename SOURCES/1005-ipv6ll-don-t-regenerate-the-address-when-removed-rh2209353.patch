@@ -1,4 +1,4 @@
-From 318470d06dc6a4dba2d627635cea6d003612bce7 Mon Sep 17 00:00:00 2001
+From 3fcb1a072f230b53c6fdf6e106e0972293a2f742 Mon Sep 17 00:00:00 2001
 From: Beniamino Galvani <bgalvani@redhat.com>
 Date: Thu, 11 May 2023 13:32:13 +0200
 Subject: [PATCH] ipv6ll: don't regenerate the address when it's removed
