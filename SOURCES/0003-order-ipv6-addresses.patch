@@ -1,0 +1,75 @@
+From 94933a67129ea9d38010b58e4928ff41aa204692 Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Wed, 4 May 2022 15:22:33 +0200
+Subject: [PATCH 1/1] Revert changes to order of static IPv6 addresses
+
+Upstream 1.38.0 and newer changed behavior so that static addresses in
+"ipv6.addresses" are sorted with most important first. That is then
+consistent with "ipv4.addresses".
+
+Revert this change for downstream RHEL.
+
+https://bugzilla.redhat.com/show_bug.cgi?id=2097270
+---
+ src/core/nm-l3-config-data.c                     | 3 ++-
+ src/libnm-core-impl/nm-setting-ip6-config.c      | 2 +-
+ src/libnmc-setting/settings-docs.h.in            | 2 +-
+ src/nmcli/generate-docs-nm-settings-nmcli.xml.in | 2 +-
+ 4 files changed, 5 insertions(+), 4 deletions(-)
+
+diff --git a/src/core/nm-l3-config-data.c b/src/core/nm-l3-config-data.c
+index bcd0b62a8488..4640acad3796 100644
+--- a/src/core/nm-l3-config-data.c
++++ b/src/core/nm-l3-config-data.c
+@@ -2753,7 +2753,8 @@ _init_from_connection_ip(NML3ConfigData *self, int addr_family, NMConnection *co
+ 
+     naddresses = nm_setting_ip_config_get_num_addresses(s_ip);
+     for (i = 0; i < naddresses; i++) {
+-        NMIPAddress         *s_addr = nm_setting_ip_config_get_address(s_ip, i);
++        const guint          addr_idx = IS_IPv4 ? i : (naddresses - i - 1);
++        NMIPAddress         *s_addr = nm_setting_ip_config_get_address(s_ip, addr_idx);
+         NMPlatformIPXAddress a;
+         NMIPAddr             addr_bin;
+         GVariant            *label;
+diff --git a/src/libnm-core-impl/nm-setting-ip6-config.c b/src/libnm-core-impl/nm-setting-ip6-config.c
+index 8b593b97336a..0356888da324 100644
+--- a/src/libnm-core-impl/nm-setting-ip6-config.c
++++ b/src/libnm-core-impl/nm-setting-ip6-config.c
+@@ -998,7 +998,7 @@ nm_setting_ip6_config_class_init(NMSettingIP6ConfigClass *klass)
+      * format: a comma separated list of addresses
+      * description: A list of IPv6 addresses and their prefix length. Multiple addresses
+      * can be separated by comma. For example "2001:db8:85a3::8a2e:370:7334/64, 2001:db8:85a3::5/64".
+-     * The addresses are listed in decreasing priority, meaning the first address will
++     * The addresses are listed in increasing priority, meaning the last address will
+      * be the primary address. This can make a difference with IPv6 source address selection
+      * (RFC 6724, section 5).
+      * ---end---
+diff --git a/src/libnmc-setting/settings-docs.h.in b/src/libnmc-setting/settings-docs.h.in
+index 1ed2f134196b..18e1ed28fc39 100644
+--- a/src/libnmc-setting/settings-docs.h.in
++++ b/src/libnmc-setting/settings-docs.h.in
+@@ -184,7 +184,7 @@
+ #define DESCRIBE_DOC_NM_SETTING_IP4_CONFIG_ROUTES N_("A list of IPv4 destination addresses, prefix length, optional IPv4 next hop addresses, optional route metric, optional attribute. The valid syntax is: \"ip[/prefix] [next-hop] [metric] [attribute=val]...[,ip[/prefix]...]\". For example \"192.0.2.0/24 10.1.1.1 77, 198.51.100.0/24\".")
+ #define DESCRIBE_DOC_NM_SETTING_IP4_CONFIG_ROUTING_RULES N_("A comma separated list of routing rules for policy routing.")
+ #define DESCRIBE_DOC_NM_SETTING_IP6_CONFIG_ADDR_GEN_MODE N_("Configure method for creating the address for use with RFC4862 IPv6 Stateless Address Autoconfiguration. The permitted values are: NM_SETTING_IP6_CONFIG_ADDR_GEN_MODE_EUI64 (0), NM_SETTING_IP6_CONFIG_ADDR_GEN_MODE_STABLE_PRIVACY (1). NM_SETTING_IP6_CONFIG_ADDR_GEN_MODE_DEFAULT_OR_EUI64 (2) or NM_SETTING_IP6_CONFIG_ADDR_GEN_MODE_DEFAULT (3). If the property is set to EUI64, the addresses will be generated using the interface tokens derived from hardware address. This makes the host part of the address to stay constant, making it possible to track host's presence when it changes networks. The address changes when the interface hardware is replaced. The value of stable-privacy enables use of cryptographically secure hash of a secret host-specific key along with the connection's stable-id and the network address as specified by RFC7217. This makes it impossible to use the address track host's presence, and makes the address stable when the network interface hardware is replaced. The special values \"default\" and \"default-or-eui64\" will fallback to the global connection default in as documented in NetworkManager.conf(5) manual. If the global default is not specified, the fallback value is \"stable-privacy\" or \"eui64\", respectively. For libnm, the property defaults to \"default\" since 1.40. Previously it defaulted to \"stable-privacy\". On D-Bus, the absence of an addr-gen-mode setting equals \"default\". For keyfile plugin, the absence of the setting on disk means \"default-or-eui64\" so that the property doesn't change on upgrade from older versions. Note that this setting is distinct from the Privacy Extensions as configured by \"ip6-privacy\" property and it does not affect the temporary addresses configured with this option.")
+-#define DESCRIBE_DOC_NM_SETTING_IP6_CONFIG_ADDRESSES N_("A list of IPv6 addresses and their prefix length. Multiple addresses can be separated by comma. For example \"2001:db8:85a3::8a2e:370:7334/64, 2001:db8:85a3::5/64\". The addresses are listed in decreasing priority, meaning the first address will be the primary address. This can make a difference with IPv6 source address selection (RFC 6724, section 5).")
++#define DESCRIBE_DOC_NM_SETTING_IP6_CONFIG_ADDRESSES N_("A list of IPv6 addresses and their prefix length. Multiple addresses can be separated by comma. For example \"2001:db8:85a3::8a2e:370:7334/64, 2001:db8:85a3::5/64\". The addresses are listed in increasing priority, meaning the last address will be the primary address. This can make a difference with IPv6 source address selection (RFC 6724, section 5).")
+ #define DESCRIBE_DOC_NM_SETTING_IP6_CONFIG_DAD_TIMEOUT N_("Timeout in milliseconds used to check for the presence of duplicate IP addresses on the network.  If an address conflict is detected, the activation will fail.  A zero value means that no duplicate address detection is performed, -1 means the default value (either configuration ipvx.dad-timeout override or zero).  A value greater than zero is a timeout in milliseconds. The property is currently implemented only for IPv4.")
+ #define DESCRIBE_DOC_NM_SETTING_IP6_CONFIG_DHCP_DUID N_("A string containing the DHCPv6 Unique Identifier (DUID) used by the dhcp client to identify itself to DHCPv6 servers (RFC 3315). The DUID is carried in the Client Identifier option. If the property is a hex string ('aa:bb:cc') it is interpreted as a binary DUID and filled as an opaque value in the Client Identifier option. The special value \"lease\" will retrieve the DUID previously used from the lease file belonging to the connection. If no DUID is found and \"dhclient\" is the configured dhcp client, the DUID is searched in the system-wide dhclient lease file. If still no DUID is found, or another dhcp client is used, a global and permanent DUID-UUID (RFC 6355) will be generated based on the machine-id. The special values \"llt\" and \"ll\" will generate a DUID of type LLT or LL (see RFC 3315) based on the current MAC address of the device. In order to try providing a stable DUID-LLT, the time field will contain a constant timestamp that is used globally (for all profiles) and persisted to disk. The special values \"stable-llt\", \"stable-ll\" and \"stable-uuid\" will generate a DUID of the corresponding type, derived from the connection's stable-id and a per-host unique key. You may want to include the \"${DEVICE}\" or \"${MAC}\" specifier in the stable-id, in case this profile gets activated on multiple devices. So, the link-layer address of \"stable-ll\" and \"stable-llt\" will be a generated address derived from the stable id. The DUID-LLT time value in the \"stable-llt\" option will be picked among a static timespan of three years (the upper bound of the interval is the same constant timestamp used in \"llt\"). When the property is unset, the global value provided for \"ipv6.dhcp-duid\" is used. If no global value is provided, the default \"lease\" value is assumed.")
+ #define DESCRIBE_DOC_NM_SETTING_IP6_CONFIG_DHCP_HOSTNAME N_("If the \"dhcp-send-hostname\" property is TRUE, then the specified name will be sent to the DHCP server when acquiring a lease. This property and \"dhcp-fqdn\" are mutually exclusive and cannot be set at the same time.")
+diff --git a/src/nmcli/generate-docs-nm-settings-nmcli.xml.in b/src/nmcli/generate-docs-nm-settings-nmcli.xml.in
+index 371081b0e0da..5c036ab60149 100644
+--- a/src/nmcli/generate-docs-nm-settings-nmcli.xml.in
++++ b/src/nmcli/generate-docs-nm-settings-nmcli.xml.in
+@@ -718,7 +718,7 @@
+                   description="DNS servers priority. The relative priority for DNS servers specified by this setting.  A lower numerical value is better (higher priority). Negative values have the special effect of excluding other configurations with a greater numerical priority value; so in presence of at least one negative priority, only DNS servers from connections with the lowest priority value will be used. To avoid all DNS leaks, set the priority of the profile that should be used to the most negative value of all active connections profiles. Zero selects a globally configured default value. If the latter is missing or zero too, it defaults to 50 for VPNs (including WireGuard) and 100 for other connections. Note that the priority is to order DNS settings for multiple active connections.  It does not disambiguate multiple DNS servers within the same connection profile. When multiple devices have configurations with the same priority, VPNs will be considered first, then devices with the best (lowest metric) default route and then all other devices. When using dns=default, servers with higher priority will be on top of resolv.conf. To prioritize a given server over another one within the same connection, just specify them in the desired order. Note that commonly the resolver tries name servers in /etc/resolv.conf in the order listed, proceeding with the next server in the list on failure. See for example the &quot;rotate&quot; option of the dns-options setting. If there are any negative DNS priorities, then only name servers from the devices with that lowest priority will be considered. When using a DNS resolver that supports Conditional Forwarding or Split DNS (with dns=dnsmasq or dns=systemd-resolved settings), each connection is used to query domains in its search list. The search domains determine which name servers to ask, and the DNS priority is used to prioritize name servers based on the domain.  Queries for domains not present in any search list are routed through connections having the &apos;~.&apos; special wildcard domain, which is added automatically to connections with the default route (or can be added manually).  When multiple connections specify the same domain, the one with the best priority (lowest numerical value) wins.  If a sub domain is configured on another interface it will be accepted regardless the priority, unless parent domain on the other interface has a negative priority, which causes the sub domain to be shadowed. With Split DNS one can avoid undesired DNS leaks by properly configuring DNS priorities and the search domains, so that only name servers of the desired interface are configured." />
+         <property name="addresses"
+                   alias="ip6"
+-                  description="A list of IPv6 addresses and their prefix length. Multiple addresses can be separated by comma. For example &quot;2001:db8:85a3::8a2e:370:7334/64, 2001:db8:85a3::5/64&quot;. The addresses are listed in decreasing priority, meaning the first address will be the primary address. This can make a difference with IPv6 source address selection (RFC 6724, section 5)." />
++                  description="A list of IPv6 addresses and their prefix length. Multiple addresses can be separated by comma. For example &quot;2001:db8:85a3::8a2e:370:7334/64, 2001:db8:85a3::5/64&quot;. The addresses are listed in increasing priority, meaning the last address will be the primary address. This can make a difference with IPv6 source address selection (RFC 6724, section 5)." />
+         <property name="gateway"
+                   alias="gw6"
+                   description="The gateway associated with this configuration. This is only meaningful if &quot;addresses&quot; is also set. Setting the gateway causes NetworkManager to configure a standard default route with the gateway as next hop. This is ignored if &quot;never-default&quot; is set. An alternative is to configure the default route explicitly with a manual route and /0 as prefix length. Note that the gateway usually conflicts with routing that NetworkManager configures for WireGuard interfaces, so usually it should not be set in that case. See &quot;ip4-auto-default-route&quot;." />
+-- 
+2.36.1
+
