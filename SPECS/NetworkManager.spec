@@ -1,12 +1,12 @@
 %global wpa_supplicant_version 1:1.1
 
-%global ppp_version %(sed -n 's/^#define\\s*VERSION\\s*"\\([^\\s]*\\)"$/\\1/p' %{_includedir}/pppd/patchlevel.h 2>/dev/null | grep . || echo bad)
+%global ppp_version %(pkg-config --modversion pppd 2>/dev/null || sed -n 's/^#define\\s*VERSION\\s*"\\([^\\s]*\\)"$/\\1/p' %{_includedir}/pppd/patchlevel.h 2>/dev/null | grep . || echo bad)
 %global glib2_version %(pkg-config --modversion glib-2.0 2>/dev/null || echo bad)
 
 %global epoch_version 1
-%global real_version 1.42.2
+%global real_version 1.44.0
 %global rpm_version %{real_version}
-%global release_version 8
+%global release_version 3
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -202,14 +202,8 @@ Source7: readme-ifcfg-rh.txt
 # Patch0001: 0001-some.patch
 
 # Bugfixes that are only relevant until next rebase of the package.
-# Patch1001: 1001-some.patch
-Patch1001: 1001-ipv6ll-don-t-regenerate-the-address-when-removed-rh2196441.patch
-Patch1002: 1002-Revert-infiniband-avoid-normalizing-the-p-key-rh2209976.patch
-Patch1003: 1003-unblock-autoconnect-upon-reapply-rh2217903.patch
-Patch1004: 1004-core-fix-l3cd-comparison-rhbz2219847.patch
-Patch1005: 1005-firewall-create-dynamic-sets-rhbz2220952.patch
-Patch1006: 1006-assume-change-IPv6-method-from-ignore-rhbz2229671.patch
-Patch1007: 1007-settings-preserve-existing-connection-flags-on-updat-rhbz2229671.patch
+Patch1001: 1001-nm-manager-ensure-device-is-exported-on-D-Bus-in-aut-rhbz2210271.patch
+Patch1002: 1002-checkpoint-Fix-segfault-crash-when-rollback-rhel-1526.patch
 
 Requires(post): systemd
 %if 0%{?fedora} || 0%{?rhel} >= 8
@@ -598,8 +592,8 @@ Requires: %{name}-libnm%{?_isa} = %{epoch}:%{version}-%{release}
 
 %description cloud-setup
 Installs a nm-cloud-setup tool that can automatically configure
-NetworkManager in cloud setups. Currently only EC2 is supported.
-This tool is still experimental.
+NetworkManager in cloud environment. Only certain cloud providers
+like Aliyun, Azure, EC2, GCP are supported.
 %endif
 
 
@@ -732,9 +726,9 @@ Preferably use nmcli instead.
 	-Difcfg_rh=true \
 	-Difupdown=false \
 %if %{with ppp}
-	-Dpppd_plugin_dir="%{_libdir}/pppd/%{ppp_version}" \
-	-Dpppd="%{_sbindir}/pppd" \
 	-Dppp=true \
+	-Dpppd="%{_sbindir}/pppd" \
+	-Dpppd_plugin_dir="%{_libdir}/pppd/%{ppp_version}" \
 %else
 	-Dppp=false \
 %endif
@@ -1246,6 +1240,7 @@ fi
 %{_unitdir}/nm-cloud-setup.timer
 %{nmlibdir}/dispatcher.d/90-nm-cloud-setup.sh
 %{nmlibdir}/dispatcher.d/no-wait.d/90-nm-cloud-setup.sh
+%{nmlibdir}/dispatcher.d/pre-up.d/90-nm-cloud-setup.sh
 %{_mandir}/man8/nm-cloud-setup.8*
 %endif
 
@@ -1258,26 +1253,84 @@ fi
 
 
 %changelog
-* Wed Aug 16 2023 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.42.2-8
-- settings: preserve existing connection flags on update (rh #2229671)
+* Wed Aug 30 2023 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.44.0-3 
+- checkpoint: Fix segfault crash when rollback (rhel-1526)
 
-* Mon Aug 14 2023 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.42.2-7
-- assume: change IPv6 method from "ignore" and "disabled" into "auto" (rh #2229671)
+* Wed Aug 23 2023 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.44.0-2
+- manager: ensure device is exported on D-Bus in authentication request (rh #2210271)
 
-* Wed Jul 12 2023 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.42.2-6
-- firewall: create "dynamic" sets for nft rules for slb-bonding (rh #2220952)
+* Thu Aug 10 2023 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.44.0-1
+- update to 1.44.0 release
+- nmcli: add nmcli version mismatch warning (rh #2173196)
+- checkpoint: preserve devices that were removed and readded (rh #2177590)
 
-* Wed Jul  5 2023 Wen Liang <wenliang@redhat.com> - 1:1.42.2-5
-- make sure that the IP and DNS configuration gets applied when it changes (rh #2219847)
+* Wed Jul 26 2023 Wen Liang <wenliang@redhat.com> - 1:1.43.90-1
+- update to 1.43.90 release (release candidate)
+- manager: allow controller activation if device is deactivating (rh #2125615)
+- assume: change IPv6 method from "ignore" and "disabled" into "auto" for loopback device (rh #2207878)
+- device: delete software device when lose carrier and is controller (rh #2224479)
+- core: better handle ignore-carrier=no for bond/bridge/team devices (rh #2180363)
 
-* Thu Jun 29 2023 Gris Ge <fge@redhat.com> - 1:1.42.2-4
-- unblock autoconnect upon reapply finish (rh #2217903)
+* Wed Jul 12 2023 Beniamino Galvani <bgalvani@redhat.com> - 1:1.43.11-1
+- update to 1.43.11 release (development)
+- fix assertion about missing ifindex when resetting MAC (rh #2215022)
+- fix wrong order of entries in resolv.conf after reconnect (rh #2218448)
+- do not fail activation when SR-IOV VF parameters can't be applied (rh #2210164)
+- warn that the ifcfg-rh plugin is deprecated (rh #2190375)
 
-* Mon May 29 2023 Wen Liang <wenliang@redhat.com> - 1:1.42.2-3
-- revert "infiniband: avoid normalizing the p-key when reading from ifcfg" (rh #2209976)
+* Wed Jun 14 2023 Thomas Haller <thaller@redhat.com> - 1:1.43.10-1
+- Update to 1.43.10 release (development)
+- fix reading infiniband p-key from ifcfg files (rh #2209974)
+- improve autoconnect when selecting controller (rh #2121451)
+- fix managing devices after network reconnect (rh #2149012)
+- better handle ignore-carrier for bond/bridge/team (rh #2180363)
+- cloud-setup: block wait-online while configuration is ongoing (rh #2151040)
+- cloud-setup: avoid leaving half configured system (rh #2207812)
+- cloud-setup: log warning when no provider detected (rh #2214880)
+- cloud-setup: fix RPM description (rh #2214491)
 
-* Tue May 23 2023 Beniamino Galvani <bgalvani@redhat.com> - 1:1.42.2-2
-- don't fail when the IPv6 link-local address is removed (rh #2196441)
+* Wed May 31 2023 Thomas Haller <thaller@redhat.com> - 1:1.43.9-1
+- Update to 1.43.9 release (development)
+- improve autoconnect logic for port/controller configurations (rh #2121451)
+- fix handling external devices during network off/on (rh #2149012)
+
+* Tue May 16 2023 Beniamino Galvani <bgalvani@redhat.com> - 1:1.43.8-1
+- Update to 1.43.8 release (development)
+- ipv6ll: don't regenerate the address when it's removed externally (rh #2196441)
+
+* Wed May  3 2023 Thomas Haller <thaller@redhat.com> - 1:1.43.7-1
+- Update to 1.43.7 release (development)
+- bond: support port priorities (rh #2152304)
+- ovs: fix autoconnect race (rh #2152864)
+
+* Wed Apr 19 2023 Beniamino Galvani <bgalvani@redhat.com> - 1:1.43.6-1
+- Update to 1.43.6 release (development)
+- fix assertion failure when renewing DHCP lease (rh #2179890)
+- emit the dhcp-change dispatcher script event on lease renewal (rh #2179537)
+- ensure the NetworkManager is restarted when dbus is restarted (rh #2161915)
+- add support for the "no-aaaa" resolv.conf option (rh #2176137)                                                                                                              -
+
+* Wed Apr 05 2023 Lubomir Rintel <lkundrak@v3.sk> - 1:1.43.5-1
+- Update to 1.43.5 release (development)
+- cloud-init/ec2: use right HTTP method for IMDSv2 (rh #2179718)
+- core: request a bus name only when dbus objects are present (rh #2175919)
+- core: fix autoconnect retry count tracking (rh #2174353)
+- core: fix retry on netlink socket buffer exhaustion (rh #2169512)
+- ovs: fix a race condition on port detachment (rh #2054933)
+
+* Wed Mar 22 2023 Thomas Haller <thaller@redhat.com> - 1:1.43.4-1
+- Update to 1.43.4 release (development)
+- core: fix handling of IPv4 prefsrc routes with ACD (rh #2046293)
+- core: don't configure static routes without addresses (rh #2102212)
+- core: fix race activating VLAN devices (rh #2155991)
+
+* Thu Mar 09 2023 Lubomir Rintel <lkundrak@v3.sk> - 1:1.43.3-1
+- Update to an early 1.44 snapshot
+- cloud-setup: add IDMSv2 support (rh #2151986)
+- core: add [link] setting (rh #2158328)
+- dhcp: expose client ID, DUID and IAID that have been used (rh #2169869)
+- ovs: ensure device has a proper MAC address once we start dhcp (rh #2168477)
+- team: fix assumption of team port management (rh #2092215)
 
 * Thu Feb 23 2023 Beniamino Galvani <bgalvani@redhat.com> - 1:1.42.2-1
 - Update to 1.42.2 release
@@ -1289,7 +1342,7 @@ fi
 * Fri Feb 10 2023 Thomas Haller <thaller@redhat.com> - 1:1.42.0-1
 - Update to 1.42.0 release
 
-* Thu Jan 26 2023 Lubomir Rintel <lkundrak@v3.sk> - - 1:1.41.91-1
+* Thu Jan 26 2023 Lubomir Rintel <lkundrak@v3.sk> - 1:1.41.91-1
 - Update to 1.41.91 release (release candidate)
 - core: retry if a rtnetlink socket runs out of buffer space (rh #2154350)
 - dns: allow changing resolv.conf options alone via global-dns (rh #2019306)
