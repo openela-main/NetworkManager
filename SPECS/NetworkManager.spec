@@ -6,7 +6,7 @@
 %global epoch_version 1
 %global real_version 1.44.0
 %global rpm_version %{real_version}
-%global release_version 3
+%global release_version 4
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -204,6 +204,7 @@ Source7: readme-ifcfg-rh.txt
 # Bugfixes that are only relevant until next rebase of the package.
 Patch1001: 1001-nm-manager-ensure-device-is-exported-on-D-Bus-in-aut-rhbz2210271.patch
 Patch1002: 1002-checkpoint-Fix-segfault-crash-when-rollback-rhel-1526.patch
+Patch1003: 1003-better-way-for-dns-changes-RHEL-14889.patch
 
 Requires(post): systemd
 %if 0%{?fedora} || 0%{?rhel} >= 8
@@ -1253,6 +1254,9 @@ fi
 
 
 %changelog
+* Fri Nov 17 2023 Íñigo Huguet <ihuguet@redhat.com> - 1:1.44.0-4
+- Add 'dns-change' dispatch event (RHEL-14889)
+
 * Wed Aug 30 2023 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.44.0-3 
 - checkpoint: Fix segfault crash when rollback (rhel-1526)
 

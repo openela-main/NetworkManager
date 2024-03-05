@@ -1,0 +1,310 @@
+From a3e39a3bf9667bb69fb2f37b605caffbd969889a Mon Sep 17 00:00:00 2001
+From: Gris Ge <fge@redhat.com>
+Date: Tue, 26 Sep 2023 15:00:32 +0800
+Subject: [PATCH 1/2] emit DNS CONFIG_CHANGED signal even dns=none
+
+Instruct the `NMDnsManager` to emit `CONFIG_CHANGED` signal even
+`dns=none` or failed to modify `/etc/resolv.conf`.
+
+The `NMPolicy` will only update hostname when DNS is managed.
+
+Signed-off-by: Gris Ge <fge@redhat.com>
+(cherry picked from commit a847ba807572c3ef3682e833432f2f93e9d519a0)
+(cherry picked from commit d10f20fd01a7bb3225c7e38ed80449e19156344b)
+---
+ src/core/dns/nm-dns-manager.c | 12 +++++++++++-
+ src/core/dns/nm-dns-manager.h |  2 ++
+ src/core/nm-policy.c          | 10 ++++++----
+ 3 files changed, 19 insertions(+), 5 deletions(-)
+
+diff --git a/src/core/dns/nm-dns-manager.c b/src/core/dns/nm-dns-manager.c
+index 535646930c..231ef72f49 100644
+--- a/src/core/dns/nm-dns-manager.c
++++ b/src/core/dns/nm-dns-manager.c
+@@ -1948,7 +1948,7 @@ plugin_skip:;
+     }
+ 
+     /* signal that DNS resolution configs were changed */
+-    if ((do_update || caching || force_emit) && result == SR_SUCCESS)
++    if ((caching || force_emit) && result == SR_SUCCESS)
+         g_signal_emit(self, signals[CONFIG_CHANGED], 0);
+ 
+     nm_clear_pointer(&priv->config_variant, g_variant_unref);
+@@ -1964,6 +1964,16 @@ plugin_skip:;
+     return TRUE;
+ }
+ 
++gboolean
++nm_dns_manager_is_unmanaged(NMDnsManager *self)
++{
++    NMDnsManagerPrivate *priv = NM_DNS_MANAGER_GET_PRIVATE(self);
++
++    return NM_IN_SET(priv->rc_manager,
++                     NM_DNS_MANAGER_RESOLV_CONF_MAN_UNMANAGED,
++                     NM_DNS_MANAGER_RESOLV_CONF_MAN_IMMUTABLE);
++}
++
+ /*****************************************************************************/
+ 
+ gboolean
+diff --git a/src/core/dns/nm-dns-manager.h b/src/core/dns/nm-dns-manager.h
+index 42f9dec588..9b8c2972b4 100644
+--- a/src/core/dns/nm-dns-manager.h
++++ b/src/core/dns/nm-dns-manager.h
+@@ -148,4 +148,6 @@ char *nmtst_dns_create_resolv_conf(const char *const *searches,
+                                    const char *const *nameservers,
+                                    const char *const *options);
+ 
++gboolean nm_dns_manager_is_unmanaged(NMDnsManager *self);
++
+ #endif /* __NETWORKMANAGER_DNS_MANAGER_H__ */
+diff --git a/src/core/nm-policy.c b/src/core/nm-policy.c
+index efdb06360f..1cf6b3398d 100644
+--- a/src/core/nm-policy.c
++++ b/src/core/nm-policy.c
+@@ -2635,11 +2635,13 @@ dns_config_changed(NMDnsManager *dns_manager, gpointer user_data)
+     if (priv->updating_dns)
+         return;
+ 
+-    nm_manager_for_each_device (priv->manager, device, tmp_lst) {
+-        nm_device_clear_dns_lookup_data(device, "DNS configuration changed");
+-    }
++    if (!nm_dns_manager_is_unmanaged(dns_manager)) {
++        nm_manager_for_each_device (priv->manager, device, tmp_lst) {
++            nm_device_clear_dns_lookup_data(device, "DNS configuration changed");
++        }
+ 
+-    update_system_hostname(self, "DNS configuration changed");
++        update_system_hostname(self, "DNS configuration changed");
++    }
+ }
+ 
+ static void
+-- 
+2.41.0
+
+
+From de4c05300e25b49bf077ac7929622f2721815b29 Mon Sep 17 00:00:00 2001
+From: Gris Ge <fge@redhat.com>
+Date: Tue, 26 Sep 2023 17:14:58 +0800
+Subject: [PATCH 2/2] dispatch `dns-change` dispatcher event
+
+Introducing new dispatcher event -- `dns-change` which will be emitted when
+DNS configuration changed(even in `dns=none` mode). This is to solve two
+use cases:
+ * Invoke dispatch script for DNS changes triggered by the global DNS
+   API.
+
+ * Do not invoke [OpenShift resolv-prepender][1] for non-DNS changes.
+
+Bug reference: https://issues.redhat.com/browse/RHEL-1671
+
+[1]: https://github.com/openshift/machine-config-operator/blob/master/templates/common/on-prem/files/resolv-prepender.yaml
+
+Signed-off-by: Gris Ge <fge@redhat.com>
+(cherry picked from commit a1db61ebc9712d1faf2ef8f1b2cb14cd819346d3)
+(cherry picked from commit 3cdce71b95cea11bf409d9353c35a4dea6f33984)
+---
+ man/NetworkManager-dispatcher.xml             | 15 +++++-
+ src/core/nm-dispatcher.c                      | 51 ++++++++++++++++---
+ src/core/nm-dispatcher.h                      |  3 ++
+ src/core/nm-policy.c                          |  2 +
+ src/libnm-core-aux-extern/nm-dispatcher-api.h |  1 +
+ src/nm-dispatcher/nm-dispatcher-utils.c       |  8 ++-
+ 6 files changed, 69 insertions(+), 11 deletions(-)
+
+diff --git a/man/NetworkManager-dispatcher.xml b/man/NetworkManager-dispatcher.xml
+index 036b3c8dcc..e87226d05e 100644
+--- a/man/NetworkManager-dispatcher.xml
++++ b/man/NetworkManager-dispatcher.xml
+@@ -68,8 +68,9 @@
+       device an operation just happened on, and second the action. For device actions,
+       the interface is the name of the kernel interface suitable for IP configuration.
+       Thus it is either VPN_IP_IFACE, DEVICE_IP_IFACE, or DEVICE_IFACE, as applicable.
+-      For the <varname>hostname</varname> action the device name is always <literal>"none"</literal>
+-      and for <varname>connectivity-change</varname> it is empty.
++      For the <varname>hostname</varname> action the device name is always <literal>"none"</literal>.
++      For <varname>connectivity-change</varname> it is empty.
++      For <varname>dns-change</varname> it is empty.
+     </para>
+     <para>The actions are:</para>
+     <variablelist class="dispatcher-options">
+@@ -170,6 +171,16 @@
+           The connection was reapplied on the device.
+         </para></listitem>
+       </varlistentry>
++      <varlistentry>
++        <term><varname>dns-change</varname></term>
++        <listitem><para>
++            The DNS configuration has changed. This action is raised even if
++            NetworkManager is configured to not manage resolv.conf (for example,
++            via dns=none). In such case, the dispatch script can discover the
++            DNS configuration provided by currently active connections by
++            looking at file /run/NetworkManager/resolv.conf
++        </para></listitem>
++      </varlistentry>
+     </variablelist>
+     <para>
+       The environment contains more information about the interface and the connection.
+diff --git a/src/core/nm-dispatcher.c b/src/core/nm-dispatcher.c
+index cdc07dd60e..9aa4194e83 100644
+--- a/src/core/nm-dispatcher.c
++++ b/src/core/nm-dispatcher.c
+@@ -50,6 +50,8 @@
+     }                                                         \
+     G_STMT_END
+ 
++static gboolean nm_dispatcher_need_device(NMDispatcherAction action);
++
+ /*****************************************************************************/
+ 
+ struct NMDispatcherCallId {
+@@ -469,7 +471,8 @@ static const char *action_table[] = {[NM_DISPATCHER_ACTION_HOSTNAME]      = NMD_
+                                      [NM_DISPATCHER_ACTION_DHCP_CHANGE_6] = NMD_ACTION_DHCP6_CHANGE,
+                                      [NM_DISPATCHER_ACTION_CONNECTIVITY_CHANGE] =
+                                          NMD_ACTION_CONNECTIVITY_CHANGE,
+-                                     [NM_DISPATCHER_ACTION_REAPPLY] = NMD_ACTION_REAPPLY};
++                                     [NM_DISPATCHER_ACTION_REAPPLY]    = NMD_ACTION_REAPPLY,
++                                     [NM_DISPATCHER_ACTION_DNS_CHANGE] = NMD_ACTION_DNS_CHANGE};
+ 
+ static const char *
+ action_to_string(NMDispatcherAction action)
+@@ -530,9 +533,7 @@ _dispatcher_call(NMDispatcherAction    action,
+     if (G_UNLIKELY(!request_id))
+         request_id = ++gl.request_id_counter;
+ 
+-    /* All actions except 'hostname' and 'connectivity-change' require a device */
+-    if (action == NM_DISPATCHER_ACTION_HOSTNAME
+-        || action == NM_DISPATCHER_ACTION_CONNECTIVITY_CHANGE) {
++    if (!nm_dispatcher_need_device(action)) {
+         _LOG2D(request_id,
+                log_ifname,
+                log_con_uuid,
+@@ -592,9 +593,8 @@ _dispatcher_call(NMDispatcherAction    action,
+     g_variant_builder_init(&vpn_ip4_props, G_VARIANT_TYPE_VARDICT);
+     g_variant_builder_init(&vpn_ip6_props, G_VARIANT_TYPE_VARDICT);
+ 
+-    /* hostname and connectivity-change actions don't send device data */
+-    if (action != NM_DISPATCHER_ACTION_HOSTNAME
+-        && action != NM_DISPATCHER_ACTION_CONNECTIVITY_CHANGE) {
++    /* hostname, DNS and connectivity-change actions don't send device data */
++    if (nm_dispatcher_need_device(action)) {
+         fill_device_props(device,
+                           &device_props,
+                           &device_proxy_props,
+@@ -925,6 +925,30 @@ nm_dispatcher_call_connectivity(NMConnectivityState  connectivity_state,
+                             out_call_id);
+ }
+ 
++/**
++ * nm_dispatcher_call_dns_change():
++ *
++ * This method does not block the caller.
++ *
++ * Returns: %TRUE if the action was dispatched, %FALSE on failure
++ */
++gboolean
++nm_dispatcher_call_dns_change(void)
++{
++    return _dispatcher_call(NM_DISPATCHER_ACTION_DNS_CHANGE,
++                            FALSE,
++                            NULL,
++                            NULL,
++                            NULL,
++                            FALSE,
++                            NM_CONNECTIVITY_UNKNOWN,
++                            NULL,
++                            NULL,
++                            NULL,
++                            NULL,
++                            NULL);
++}
++
+ void
+ nm_dispatcher_call_cancel(NMDispatcherCallId *call_id)
+ {
+@@ -937,3 +961,16 @@ nm_dispatcher_call_cancel(NMDispatcherCallId *call_id)
+     _LOG3D(call_id, "cancelling dispatcher callback action");
+     call_id->callback = NULL;
+ }
++
++/* All actions except 'hostname', 'connectivity-change' and 'dns-change' require
++ * a device */
++static gboolean
++nm_dispatcher_need_device(NMDispatcherAction action)
++{
++    if (action == NM_DISPATCHER_ACTION_HOSTNAME
++        || action == NM_DISPATCHER_ACTION_CONNECTIVITY_CHANGE
++        || action == NM_DISPATCHER_ACTION_DNS_CHANGE) {
++        return FALSE;
++    }
++    return TRUE;
++}
+diff --git a/src/core/nm-dispatcher.h b/src/core/nm-dispatcher.h
+index 3071639922..a1cb96b798 100644
+--- a/src/core/nm-dispatcher.h
++++ b/src/core/nm-dispatcher.h
+@@ -23,6 +23,7 @@ typedef enum {
+     NM_DISPATCHER_ACTION_DHCP_CHANGE_6,
+     NM_DISPATCHER_ACTION_CONNECTIVITY_CHANGE,
+     NM_DISPATCHER_ACTION_REAPPLY,
++    NM_DISPATCHER_ACTION_DNS_CHANGE,
+ } NMDispatcherAction;
+ 
+ #define NM_DISPATCHER_ACTION_DHCP_CHANGE_X(IS_IPv4) \
+@@ -69,6 +70,8 @@ gboolean nm_dispatcher_call_connectivity(NMConnectivityState  state,
+                                          gpointer             user_data,
+                                          NMDispatcherCallId **out_call_id);
+ 
++gboolean nm_dispatcher_call_dns_change(void);
++
+ void nm_dispatcher_call_cancel(NMDispatcherCallId *call_id);
+ 
+ #endif /* __NM_DISPATCHER_H__ */
+diff --git a/src/core/nm-policy.c b/src/core/nm-policy.c
+index 1cf6b3398d..2873847df3 100644
+--- a/src/core/nm-policy.c
++++ b/src/core/nm-policy.c
+@@ -2642,6 +2642,8 @@ dns_config_changed(NMDnsManager *dns_manager, gpointer user_data)
+ 
+         update_system_hostname(self, "DNS configuration changed");
+     }
++
++    nm_dispatcher_call_dns_change();
+ }
+ 
+ static void
+diff --git a/src/libnm-core-aux-extern/nm-dispatcher-api.h b/src/libnm-core-aux-extern/nm-dispatcher-api.h
+index 56da5fba7a..7cb370a92e 100644
+--- a/src/libnm-core-aux-extern/nm-dispatcher-api.h
++++ b/src/libnm-core-aux-extern/nm-dispatcher-api.h
+@@ -34,6 +34,7 @@
+ #define NMD_ACTION_DHCP6_CHANGE        "dhcp6-change"
+ #define NMD_ACTION_CONNECTIVITY_CHANGE "connectivity-change"
+ #define NMD_ACTION_REAPPLY             "reapply"
++#define NMD_ACTION_DNS_CHANGE          "dns-change"
+ 
+ typedef enum {
+     DISPATCH_RESULT_UNKNOWN     = 0,
+diff --git a/src/nm-dispatcher/nm-dispatcher-utils.c b/src/nm-dispatcher/nm-dispatcher-utils.c
+index 74ea4e4001..f8a4c28000 100644
+--- a/src/nm-dispatcher/nm-dispatcher-utils.c
++++ b/src/nm-dispatcher/nm-dispatcher-utils.c
+@@ -453,8 +453,12 @@ nm_dispatcher_utils_construct_envp(const char  *action,
+ 
+     items = g_ptr_array_new_with_free_func(g_free);
+ 
+-    /* Hostname and connectivity changes don't require a device nor contain a connection */
+-    if (NM_IN_STRSET(action, NMD_ACTION_HOSTNAME, NMD_ACTION_CONNECTIVITY_CHANGE))
++    /* Hostname, dns and connectivity changes don't require a device nor contain
++     * a connection */
++    if (NM_IN_STRSET(action,
++                     NMD_ACTION_HOSTNAME,
++                     NMD_ACTION_CONNECTIVITY_CHANGE,
++                     NMD_ACTION_DNS_CHANGE))
+         goto done;
+ 
+     /* Connection properties */
+-- 
+2.41.0
+
