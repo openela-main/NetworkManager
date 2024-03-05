@@ -6,7 +6,7 @@
 %global epoch_version 1
 %global real_version 1.40.16
 %global rpm_version %{real_version}
-%global release_version 9
+%global release_version 13
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -204,6 +204,10 @@ Patch1005: 1005-ipv6ll-don-t-regenerate-the-address-when-removed-rh2209353.patch
 Patch1006: 1006-fix-read-infiniband-from-ifcfg-rh2209164.patch
 Patch1007: 1007-unblock-autoconnect-on-reapply-rh2207690.patch
 Patch1008: 1008-cloud-setup-fix-terminating-in-reconfig-rh2221903.patch
+Patch1009: 1009-manager-allow-controller-activation-if-device-is-dea-rhel-5119.patch
+Patch1010: 1010-better-dispatch-way-for-dns-changes-RHEL-14886.patch
+Patch1011: 1011-device-do-not-set-MAC-address-on-iface-with-index-0-RHEL-17839.patch
+Patch1012: 1012-fix-matching-existing-connection-by-UUID-on-restart-rhel-5122.patch
 
 Requires(post): systemd
 %if 0%{?fedora} || 0%{?rhel} >= 8
@@ -1239,6 +1243,18 @@ fi
 
 
 %changelog
+* Fri Dec 08 2023 Wen Liang <wenliang@redhat.com> - 1:1.40.16-13
+- Fix matching existing connection by UUID on restart (RHEL-5122)
+
+* Mon Dec 04 2023 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.40.16-12
+- device: do not set MAC address on iface with index <=0 (RHEL-17839)
+
+* Thu Nov 16 2023 Íñigo Huguet <ihuguet@redhat.com> - 1:1.40.16-11
+- New dispatcher event 'dns-change' (RHEL-14886)
+
+* Wed Oct 04 2023 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.40.16-10
+- manager: allow controller activation if device is deactivating (RHEL-5119) 
+
 * Wed Jul 19 2023 Beniamino Galvani <bgalvani@redhat.com> - 1:1.40.16-9
 - cloud-setup: fix terminating in the middle of reconfiguration (rh #2221903)
 

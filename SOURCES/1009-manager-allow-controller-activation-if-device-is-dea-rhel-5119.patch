@@ -1,0 +1,50 @@
+From a5826caf0607ca3c490bdc76d1d453226ca2e191 Mon Sep 17 00:00:00 2001
+From: Fernando Fernandez Mancera <ffmancera@riseup.net>
+Date: Tue, 18 Jul 2023 13:46:30 +0200
+Subject: [PATCH] manager: allow controller activation if device is
+ deactivating
+
+When activating a port connection it will require the controller
+connection is active or a valid controller device candidate is available
+for activation.
+
+One of the conditions we consider for a controller device to be a valid
+candidate for the connection is that it is not active, therefore we
+should also consider as valid a device that is currently deactivating.
+Otherwise, we could fail during the port activation just because the
+deactivation of the controller device candidate didn't finish yet.
+
+https://bugzilla.redhat.com/show_bug.cgi?id=2125615
+
+https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/merge_requests/1693
+(cherry picked from commit fb362e0583fe9b75269220c7c8b966e2247084ea)
+(cherry picked from commit 43f244ef2e4c4052fe708b77244444ee7eff238c)
+(cherry picked from commit 401f153dfb52d12495bb39899f2b4dde7dfb72ce)
+---
+ src/core/nm-manager.c | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/src/core/nm-manager.c b/src/core/nm-manager.c
+index 822df7ad3b..4ef87a5d83 100644
+--- a/src/core/nm-manager.c
++++ b/src/core/nm-manager.c
+@@ -4608,11 +4608,11 @@ ensure_master_active_connection(NMManager            *self,
+                     NULL))
+                 continue;
+ 
+-            if (!nm_device_is_software(candidate)) {
+-                master_state = nm_device_get_state(candidate);
+-                if (nm_device_is_real(candidate) && master_state != NM_DEVICE_STATE_DISCONNECTED)
+-                    continue;
+-            }
++            if (nm_device_is_real(candidate)
++                && !NM_IN_SET(nm_device_get_state(candidate),
++                              NM_DEVICE_STATE_DISCONNECTED,
++                              NM_DEVICE_STATE_DEACTIVATING))
++                continue;
+ 
+             master_ac = nm_manager_activate_connection(
+                 self,
+-- 
+2.41.0
+

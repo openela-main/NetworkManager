@@ -1,0 +1,51 @@
+From 51901a2266d7d1ffd3465906c55064c512cb075d Mon Sep 17 00:00:00 2001
+From: Gris Ge <fge@redhat.com>
+Date: Wed, 12 Jul 2023 16:22:03 +0800
+Subject: [PATCH] device: do not set MAC address on iface with index <=0
+
+The `nm_device_hw_addr_reset()` should only set MAC address on NIC
+with valid(>0) interface index.
+
+The failure was found by `ovs_mtu` test of NMCI, failed to reproduce
+the original problem (`ovs_mtu` test of NMCI) with 100 times retry.
+And no trace log found for original test failure, hence cannot tell why
+`nm_device_hw_addr_reset()` been invoked with iface index 0.
+
+Signed-off-by: Gris Ge <fge@redhat.com>
+(cherry picked from commit 215bc1525501b22325c2a17090a5f911e01f06a9)
+(cherry picked from commit 21f1e5cdc7d72376cdaa63112d8a134b714b2002)
+(cherry picked from commit 37bd70034f7f43becf2cc64468143c5ea2666762)
+---
+ src/core/devices/nm-device.c | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/src/core/devices/nm-device.c b/src/core/devices/nm-device.c
+index 2ac55fa83c..5748d80393 100644
+--- a/src/core/devices/nm-device.c
++++ b/src/core/devices/nm-device.c
+@@ -16859,6 +16859,7 @@ nm_device_hw_addr_reset(NMDevice *self, const char *detail)
+ {
+     NMDevicePrivate *priv;
+     const char      *addr;
++    int              ifindex;
+ 
+     g_return_val_if_fail(NM_IS_DEVICE(self), FALSE);
+ 
+@@ -16868,7 +16869,13 @@ nm_device_hw_addr_reset(NMDevice *self, const char *detail)
+         return TRUE;
+ 
+     priv->hw_addr_type = HW_ADDR_TYPE_UNSET;
+-    addr               = nm_device_get_initial_hw_address(self);
++
++    ifindex = nm_device_get_ip_ifindex(self);
++    if (ifindex <= 0) {
++        return TRUE;
++    }
++
++    addr = nm_device_get_initial_hw_address(self);
+     if (!addr) {
+         /* as hw_addr_type is not UNSET, we expect that we can get an
+          * initial address to which to reset. */
+-- 
+2.41.0
+
