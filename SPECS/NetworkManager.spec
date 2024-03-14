@@ -6,7 +6,7 @@
 %global epoch_version 1
 %global real_version 1.44.0
 %global rpm_version %{real_version}
-%global release_version 4
+%global release_version 5
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -205,6 +205,7 @@ Source7: readme-ifcfg-rh.txt
 Patch1001: 1001-nm-manager-ensure-device-is-exported-on-D-Bus-in-aut-rhbz2210271.patch
 Patch1002: 1002-checkpoint-Fix-segfault-crash-when-rollback-rhel-1526.patch
 Patch1003: 1003-better-way-for-dns-changes-RHEL-14889.patch
+Patch1004: 1004-bridge-skip-VLAN-filtering-resetting-in-reapply-RHEL-25061.patch
 
 Requires(post): systemd
 %if 0%{?fedora} || 0%{?rhel} >= 8
@@ -1254,6 +1255,9 @@ fi
 
 
 %changelog
+* Wed Feb 21 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.44.0-5
+- skip VLAN filtering resetting in reapply if no vlan change changed (RHEL-25061)
+
 * Fri Nov 17 2023 Íñigo Huguet <ihuguet@redhat.com> - 1:1.44.0-4
 - Add 'dns-change' dispatch event (RHEL-14889)
 
