@@ -1,0 +1,130 @@
+From f06345c2ef66cc3df639019026ba46d0795376e8 Mon Sep 17 00:00:00 2001
+From: Yuki Inoguchi <inoguchi.yuki@fujitsu.com>
+Date: Tue, 10 Oct 2023 17:50:37 +0900
+Subject: [PATCH] device: disable IPv6 in NetworkManager when disabled in
+ kernel
+
+When IPv6 is disabled in kernel but ipv6.method is set to auto, NetworkManager repeatedly attempts
+IPv6 configuration internally, resulting in unnecessary warning messages being output infinitely.
+
+  platform-linux: do-add-ip6-address[2: fe80::5054:ff:fe7c:4293]: failure 95 (Operation not supported)
+  ipv6ll[e898db403d9b5099,ifindex=2]: changed: no IPv6 link local address to retry after Duplicate Address Detection failures (back off)
+  platform-linux: do-add-ip6-address[2: fe80::5054:ff:fe7c:4293]: failure 95 (Operation not supported)
+  ipv6ll[e898db403d9b5099,ifindex=2]: changed: no IPv6 link local address to retry after Duplicate Address Detection failures (back off)
+  platform-linux: do-add-ip6-address[2: fe80::5054:ff:fe7c:4293]: failure 95 (Operation not supported)
+  ipv6ll[e898db403d9b5099,ifindex=2]: changed: no IPv6 link local address to retry after Duplicate Address Detection failures (back off)
+
+To prevent this issue, let's disable IPv6 in NetworkManager when it is disabled in the kernel.
+
+In order to do it in activate_stage3_ip_config() only once during activation,
+the firewall initialization needed to be moved earlier. Otherwise, the IPv6 disablement could occur
+twice during activation because activate_stage3_ip_config() is also executed from subsequent of fw_change_zone().
+
+(cherry picked from commit 50a6386c3ba6ae9b0501e56bd78fd141636770a7)
+(cherry picked from commit 4a9cf4c1dd972de11a2d7c6b0dd8328b2dc24f69)
+(cherry picked from commit ffef5a47489ee65122a0c532fffdc77707d68231)
+Solved some conflicts due to missing 61e1027cc783 ('device: preserve the DHCP lease during reapply')
+(cherry picked from commit f407868ee25c06f9a41c72ecd54e83dd4317b4fe)
+---
+ src/core/devices/nm-device.c | 63 +++++++++++++++++++-----------------
+ 1 file changed, 33 insertions(+), 30 deletions(-)
+
+diff --git a/src/core/devices/nm-device.c b/src/core/devices/nm-device.c
+index 5748d80393..e54942440f 100644
+--- a/src/core/devices/nm-device.c
++++ b/src/core/devices/nm-device.c
+@@ -11556,16 +11556,8 @@ _dev_ipac6_start(NMDevice *self)
+     NMUtilsIPv6IfaceId  iid;
+     gboolean            is_token;
+ 
+-    if (priv->ipac6_data.state == NM_DEVICE_IP_STATE_NONE) {
+-        if (!g_file_test("/proc/sys/net/ipv6", G_FILE_TEST_IS_DIR)) {
+-            _LOGI_ipac6("addrconf6: kernel does not support IPv6");
+-            _dev_ipac6_set_state(self, NM_DEVICE_IP_STATE_FAILED);
+-            _dev_ip_state_check_async(self, AF_INET6);
+-            return;
+-        }
+-
++    if (priv->ipac6_data.state == NM_DEVICE_IP_STATE_NONE)
+         _dev_ipac6_set_state(self, NM_DEVICE_IP_STATE_PENDING);
+-    }
+ 
+     if (NM_IN_SET(priv->ipll_data_6.state, NM_DEVICE_IP_STATE_NONE, NM_DEVICE_IP_STATE_PENDING)) {
+         _dev_ipac6_grace_period_start(self, 30, TRUE);
+@@ -12092,15 +12084,6 @@ activate_stage3_ip_config(NMDevice *self)
+ 
+     ifindex = nm_device_get_ip_ifindex(self);
+ 
+-    if (priv->ip_data_4.do_reapply) {
+-        _LOGD_ip(AF_INET, "reapply...");
+-        _cleanup_ip_pre(self, AF_INET, CLEANUP_TYPE_DECONFIGURE, TRUE);
+-    }
+-    if (priv->ip_data_6.do_reapply) {
+-        _LOGD_ip(AF_INET6, "reapply...");
+-        _cleanup_ip_pre(self, AF_INET6, CLEANUP_TYPE_DECONFIGURE, TRUE);
+-    }
+-
+     /* Add the interface to the specified firewall zone */
+     switch (priv->fw_state) {
+     case FIREWALL_STATE_UNMANAGED:
+@@ -12125,6 +12108,38 @@ activate_stage3_ip_config(NMDevice *self)
+     }
+     nm_assert(ifindex <= 0 || priv->fw_state == FIREWALL_STATE_INITIALIZED);
+ 
++    ipv4_method = nm_device_get_effective_ip_config_method(self, AF_INET);
++    if (nm_streq(ipv4_method, NM_SETTING_IP4_CONFIG_METHOD_AUTO)) {
++        /* "auto" usually means DHCPv4 or autoconf6, but it doesn't have to be. Subclasses
++         * can overwrite it. For example, you cannot run DHCPv4 on PPP/WireGuard links. */
++        ipv4_method = klass->get_ip_method_auto(self, AF_INET);
++    }
++
++    ipv6_method = nm_device_get_effective_ip_config_method(self, AF_INET6);
++    if (!g_file_test("/proc/sys/net/ipv6", G_FILE_TEST_IS_DIR)) {
++        _NMLOG_ip((nm_device_sys_iface_state_is_external(self)
++                   || NM_IN_STRSET(ipv6_method,
++                                   NM_SETTING_IP6_CONFIG_METHOD_AUTO,
++                                   NM_SETTING_IP6_CONFIG_METHOD_DISABLED,
++                                   NM_SETTING_IP6_CONFIG_METHOD_IGNORE))
++                      ? LOGL_DEBUG
++                      : LOGL_WARN,
++                  AF_INET6,
++                  "IPv6 not supported by kernel resulting in \"ipv6.method=disabled\"");
++        ipv6_method = NM_SETTING_IP6_CONFIG_METHOD_DISABLED;
++    } else if (nm_streq(ipv6_method, NM_SETTING_IP6_CONFIG_METHOD_AUTO)) {
++        ipv6_method = klass->get_ip_method_auto(self, AF_INET6);
++    }
++
++    if (priv->ip_data_4.do_reapply) {
++        _LOGD_ip(AF_INET, "reapply...");
++        _cleanup_ip_pre(self, AF_INET, CLEANUP_TYPE_DECONFIGURE, TRUE);
++    }
++    if (priv->ip_data_6.do_reapply) {
++        _LOGD_ip(AF_INET6, "reapply...");
++        _cleanup_ip_pre(self, AF_INET6, CLEANUP_TYPE_DECONFIGURE, TRUE);
++    }
++
+     if (priv->state < NM_DEVICE_STATE_IP_CONFIG) {
+         _dev_ip_state_req_timeout_schedule(self, AF_INET);
+         _dev_ip_state_req_timeout_schedule(self, AF_INET6);
+@@ -12150,18 +12165,6 @@ activate_stage3_ip_config(NMDevice *self)
+      * let's do it! */
+     _commit_mtu(self);
+ 
+-    ipv4_method = nm_device_get_effective_ip_config_method(self, AF_INET);
+-    if (nm_streq(ipv4_method, NM_SETTING_IP4_CONFIG_METHOD_AUTO)) {
+-        /* "auto" usually means DHCPv4 or autoconf6, but it doesn't have to be. Subclasses
+-         * can overwrite it. For example, you cannot run DHCPv4 on PPP/WireGuard links. */
+-        ipv4_method = klass->get_ip_method_auto(self, AF_INET);
+-    }
+-
+-    ipv6_method = nm_device_get_effective_ip_config_method(self, AF_INET6);
+-    if (nm_streq(ipv6_method, NM_SETTING_IP6_CONFIG_METHOD_AUTO)) {
+-        ipv6_method = klass->get_ip_method_auto(self, AF_INET6);
+-    }
+-
+     if (!nm_device_sys_iface_state_is_external(self)
+         && (!klass->ready_for_ip_config || klass->ready_for_ip_config(self, TRUE))) {
+         if (priv->ipmanual_data.state_6 == NM_DEVICE_IP_STATE_NONE
+-- 
+2.43.0
+

@@ -6,7 +6,7 @@
 %global epoch_version 1
 %global real_version 1.40.16
 %global rpm_version %{real_version}
-%global release_version 13
+%global release_version 15
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -208,6 +208,8 @@ Patch1009: 1009-manager-allow-controller-activation-if-device-is-dea-rhel-5119.p
 Patch1010: 1010-better-dispatch-way-for-dns-changes-RHEL-14886.patch
 Patch1011: 1011-device-do-not-set-MAC-address-on-iface-with-index-0-RHEL-17839.patch
 Patch1012: 1012-fix-matching-existing-connection-by-UUID-on-restart-rhel-5122.patch
+Patch1013: 1013-fix-l3cd-comparison-rhel-20600.patch
+Patch1014: 1014-device-disable-IPv6-in-NetworkManager-when-disabled-rhel-24968.patch
 
 Requires(post): systemd
 %if 0%{?fedora} || 0%{?rhel} >= 8
@@ -1243,6 +1245,12 @@ fi
 
 
 %changelog
+* Thu Feb 15 2024 Íñigo Huguet <ihuguet@redhat.com - 1:1.40.16-15
+- Disable IPv6 in NetworkManager when disabled in kernel (RHEL-24968)
+
+* Mon Jan 15 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.40.16-14
+- Fix l3cd comparison (RHEL-20600)
+
 * Fri Dec 08 2023 Wen Liang <wenliang@redhat.com> - 1:1.40.16-13
 - Fix matching existing connection by UUID on restart (RHEL-5122)
 
