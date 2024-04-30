@@ -1,0 +1,235 @@
+From ba47f23b08bb59ec2daf6bce73a94182d8028c82 Mon Sep 17 00:00:00 2001
+From: Gris Ge <fge@redhat.com>
+Date: Wed, 13 Mar 2024 20:52:37 +0800
+Subject: [PATCH] checkpoint: Allow rollback on internal global DNS
+
+With `NM_CHECKPOINT_CREATE_FLAG_TRACK_INTERNAL_GLOBAL_DNS` flag set on
+checkpoint creation, the checkpoint rollback will restore the
+global DNS in internal configure file
+`/var/lib/NetworkManager/NetworkManager-intern.conf`.
+
+If user has set global DNS in /etc folder, this flag will not take any
+effect.
+
+Resolves: https://issues.redhat.com/browse/RHEL-23446
+
+Signed-off-by: Gris Ge <fge@redhat.com>
+(cherry picked from commit 86d67da28dd047a08a01687d8154b377d1c25b4c)
+(cherry picked from commit 69d5761fa87bb85df037ad9044c03dd1922d3ee4)
+---
+ src/core/nm-checkpoint.c                  | 28 ++++++++++++++
+ src/core/nm-config-data.c                 | 47 +++++++++++++++++++++++
+ src/core/nm-config-data.h                 |  3 +-
+ src/core/nm-manager.c                     | 11 +++++-
+ src/core/nm-manager.h                     |  3 ++
+ src/libnm-core-public/nm-dbus-interface.h |  6 +++
+ 6 files changed, 96 insertions(+), 2 deletions(-)
+
+diff --git a/src/core/nm-checkpoint.c b/src/core/nm-checkpoint.c
+index 74adf48477..cc5c189bf9 100644
+--- a/src/core/nm-checkpoint.c
++++ b/src/core/nm-checkpoint.c
+@@ -13,6 +13,7 @@
+ #include "nm-core-utils.h"
+ #include "nm-dbus-interface.h"
+ #include "devices/nm-device.h"
++#include "nm-config.h"
+ #include "nm-manager.h"
+ #include "settings/nm-settings.h"
+ #include "settings/nm-settings-connection.h"
+@@ -55,6 +56,8 @@ struct _NMCheckpointPrivate {
+ 
+     NMCheckpointTimeoutCallback timeout_cb;
+     gpointer                    timeout_data;
++
++    NMGlobalDnsConfig *global_dns_config;
+ };
+ 
+ struct _NMCheckpointClass {
+@@ -491,6 +494,17 @@ next_dev:
+             }
+         }
+     }
++    if (NM_FLAGS_HAS(priv->flags, NM_CHECKPOINT_CREATE_FLAG_TRACK_INTERNAL_GLOBAL_DNS)
++        && priv->global_dns_config) {
++        gs_free_error GError *error = NULL;
++        NMConfig             *config;
++
++        config = nm_manager_get_config(priv->manager);
++        nm_assert(config);
++        if (!nm_config_set_global_dns(config, priv->global_dns_config, &error)) {
++            _LOGE("set global DNS failed with error: %s", error->message);
++        }
++    }
+ 
+     return g_variant_new("(a{su})", &builder);
+ }
+@@ -742,6 +756,19 @@ nm_checkpoint_new(NMManager              *manager,
+                                             NM_MANAGER_DEVICE_REMOVED,
+                                             G_CALLBACK(_device_removed),
+                                             self);
++    if (NM_FLAGS_HAS(flags, NM_CHECKPOINT_CREATE_FLAG_TRACK_INTERNAL_GLOBAL_DNS)) {
++        NMConfigData      *config_data;
++        NMGlobalDnsConfig *dns_config = NULL;
++
++        config_data = nm_config_get_data(nm_manager_get_config(manager));
++        if (config_data) {
++            dns_config = nm_config_data_get_global_dns_config(config_data);
++            if (!dns_config || nm_global_dns_config_is_internal(dns_config)) {
++                priv->global_dns_config = nm_global_dns_config_clone(dns_config);
++            }
++        }
++    }
++
+     return self;
+ }
+ 
+@@ -756,6 +783,7 @@ dispose(GObject *object)
+     nm_clear_pointer(&priv->devices, g_hash_table_unref);
+     nm_clear_pointer(&priv->connection_uuids, g_hash_table_unref);
+     nm_clear_pointer(&priv->removed_devices, g_ptr_array_unref);
++    nm_global_dns_config_free(priv->global_dns_config);
+ 
+     nm_clear_g_signal_handler(priv->manager, &priv->dev_removed_id);
+     g_clear_object(&priv->manager);
+diff --git a/src/core/nm-config-data.c b/src/core/nm-config-data.c
+index 468e56b821..d4498edd88 100644
+--- a/src/core/nm-config-data.c
++++ b/src/core/nm-config-data.c
+@@ -2436,3 +2436,50 @@ nm_config_data_class_init(NMConfigDataClass *config_class)
+ 
+     g_object_class_install_properties(object_class, _PROPERTY_ENUMS_LAST, obj_properties);
+ }
++
++static NMGlobalDnsDomain *
++nm_global_dns_domain_clone(NMGlobalDnsDomain *old_domain)
++{
++    if (old_domain) {
++        NMGlobalDnsDomain *new_domain = g_malloc0(sizeof(NMGlobalDnsDomain));
++        new_domain->name              = g_strdup(old_domain->name);
++        new_domain->servers           = (char **) nm_strv_dup(old_domain->servers, -1, TRUE);
++        new_domain->options           = (char **) nm_strv_dup(old_domain->options, -1, TRUE);
++        return new_domain;
++    } else {
++        return NULL;
++    }
++}
++
++NMGlobalDnsConfig *
++nm_global_dns_config_clone(NMGlobalDnsConfig *old_dns_config)
++{
++    NMGlobalDnsConfig *new_dns_config;
++    gpointer           key, value;
++    NMGlobalDnsDomain *old_domain;
++    GHashTableIter     iter;
++
++    new_dns_config           = g_malloc0(sizeof(NMGlobalDnsConfig));
++    new_dns_config->internal = TRUE;
++
++    if (old_dns_config) {
++        new_dns_config->internal = old_dns_config->internal;
++        new_dns_config->searches = nm_strv_dup(old_dns_config->searches, -1, TRUE);
++        new_dns_config->options  = nm_strv_dup(old_dns_config->options, -1, TRUE);
++        new_dns_config->domains  = g_hash_table_new_full(nm_str_hash,
++                                                        g_str_equal,
++                                                        g_free,
++                                                        (GDestroyNotify) global_dns_domain_free);
++        if (old_dns_config->domains) {
++            g_hash_table_iter_init(&iter, old_dns_config->domains);
++            while (g_hash_table_iter_next(&iter, &key, &value)) {
++                old_domain = value;
++                g_hash_table_insert(new_dns_config->domains,
++                                    g_strdup(key),
++                                    nm_global_dns_domain_clone(old_domain));
++            }
++        }
++        global_dns_config_seal_domains(new_dns_config);
++    }
++    return new_dns_config;
++}
+diff --git a/src/core/nm-config-data.h b/src/core/nm-config-data.h
+index 9e7a50fc24..0344ce9055 100644
+--- a/src/core/nm-config-data.h
++++ b/src/core/nm-config-data.h
+@@ -280,7 +280,8 @@ int                nm_global_dns_config_cmp(const NMGlobalDnsConfig *a,
+                                             const NMGlobalDnsConfig *b,
+                                             gboolean                 check_internal);
+ void nm_global_dns_config_update_checksum(const NMGlobalDnsConfig *dns_config, GChecksum *sum);
+-void nm_global_dns_config_free(NMGlobalDnsConfig *dns_config);
++NMGlobalDnsConfig *nm_global_dns_config_clone(NMGlobalDnsConfig *dns_config);
++void               nm_global_dns_config_free(NMGlobalDnsConfig *dns_config);
+ 
+ NMGlobalDnsConfig *nm_global_dns_config_from_dbus(const GValue *value, GError **error);
+ void               nm_global_dns_config_to_dbus(const NMGlobalDnsConfig *dns_config, GValue *value);
+diff --git a/src/core/nm-manager.c b/src/core/nm-manager.c
+index 730ba4763b..6739e5599e 100644
+--- a/src/core/nm-manager.c
++++ b/src/core/nm-manager.c
+@@ -8458,7 +8458,8 @@ impl_manager_checkpoint_create(NMDBusObject                      *obj,
+                                      | NM_CHECKPOINT_CREATE_FLAG_DELETE_NEW_CONNECTIONS
+                                      | NM_CHECKPOINT_CREATE_FLAG_DISCONNECT_NEW_DEVICES
+                                      | NM_CHECKPOINT_CREATE_FLAG_ALLOW_OVERLAPPING
+-                                     | NM_CHECKPOINT_CREATE_FLAG_NO_PRESERVE_EXTERNAL_PORTS)))) {
++                                     | NM_CHECKPOINT_CREATE_FLAG_NO_PRESERVE_EXTERNAL_PORTS
++                                     | NM_CHECKPOINT_CREATE_FLAG_TRACK_INTERNAL_GLOBAL_DNS)))) {
+         g_dbus_method_invocation_return_error_literal(invocation,
+                                                       NM_MANAGER_ERROR,
+                                                       NM_MANAGER_ERROR_INVALID_ARGUMENTS,
+@@ -9765,3 +9766,11 @@ nm_manager_class_init(NMManagerClass *manager_class)
+                                                    1,
+                                                    NM_TYPE_DEVICE);
+ }
++
++NMConfig *
++nm_manager_get_config(NMManager *self)
++{
++    NMManagerPrivate *priv = NM_MANAGER_GET_PRIVATE(self);
++
++    return priv->config;
++}
+diff --git a/src/core/nm-manager.h b/src/core/nm-manager.h
+index 3028eb7ebe..3c5213c4f2 100644
+--- a/src/core/nm-manager.h
++++ b/src/core/nm-manager.h
+@@ -10,6 +10,7 @@
+ #include "settings/nm-settings-connection.h"
+ #include "c-list/src/c-list.h"
+ #include "nm-dbus-manager.h"
++#include "nm-config-data.h"
+ 
+ #define NM_TYPE_MANAGER            (nm_manager_get_type())
+ #define NM_MANAGER(obj)            (_NM_G_TYPE_CHECK_INSTANCE_CAST((obj), NM_TYPE_MANAGER, NMManager))
+@@ -266,4 +267,6 @@ gboolean nm_manager_devcon_autoconnect_blocked_reason_set(NMManager            *
+                                                           NMSettingsAutoconnectBlockedReason value,
+                                                           gboolean                           set);
+ 
++NMConfig *nm_manager_get_config(NMManager *self);
++
+ #endif /* __NETWORKMANAGER_MANAGER_H__ */
+diff --git a/src/libnm-core-public/nm-dbus-interface.h b/src/libnm-core-public/nm-dbus-interface.h
+index 66cd590d6c..ab94244c21 100644
+--- a/src/libnm-core-public/nm-dbus-interface.h
++++ b/src/libnm-core-public/nm-dbus-interface.h
+@@ -991,6 +991,11 @@ typedef enum {
+  *   With this flag, the rollback detaches all external ports.
+  *   This only has an effect for bridge ports. Before 1.38, this was the default
+  *   behavior. Since: 1.38.
++ * @NM_CHECKPOINT_CREATE_FLAG_TRACK_INTERNAL_GLOBAL_DNS: during rollback,
++ *   by default changes to global DNS via D-BUS interface are preserved.
++ *   With this flag, the rollback reverts the global DNS changes made via D-Bus
++ *   interface. Global DNS defined in [global-dns] section of
++ *   NetworkManager.conf is not impacted by this flag. Since: 1.48.
+  *
+  * The flags for CheckpointCreate call
+  *
+@@ -1003,6 +1008,7 @@ typedef enum /*< flags >*/ {
+     NM_CHECKPOINT_CREATE_FLAG_DISCONNECT_NEW_DEVICES     = 0x04,
+     NM_CHECKPOINT_CREATE_FLAG_ALLOW_OVERLAPPING          = 0x08,
+     NM_CHECKPOINT_CREATE_FLAG_NO_PRESERVE_EXTERNAL_PORTS = 0x10,
++    NM_CHECKPOINT_CREATE_FLAG_TRACK_INTERNAL_GLOBAL_DNS  = 0x20,
+ } NMCheckpointCreateFlags;
+ 
+ /**
+-- 
+2.44.0
+

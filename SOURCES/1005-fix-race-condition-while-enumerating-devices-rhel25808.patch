@@ -1,0 +1,66 @@
+From 8ff08068342d1d8efe1e6d6c9a241e3395641a76 Mon Sep 17 00:00:00 2001
+From: Beniamino Galvani <bgalvani@redhat.com>
+Date: Thu, 21 Mar 2024 09:45:15 +0100
+Subject: [PATCH 2/2] manager: fix race condition while enumerating devices at
+ startup
+
+While enumerating devices at startup, we take a snapshot of existing
+links from platform and we start creating device instances for
+them. It's possible that in the meantime, while processing netlink
+events in platform_link_added(), a link gets renamed. If that happens,
+then we have two different views of the same ifindex: the cached link
+from `links` and the link in platform.
+
+This can cause issues: in platform_link_added() we create the device
+with the cached name; then in NMDevice's constructor(), we look up
+from platform the ifindex for the given name. Because of the rename,
+this lookup can match a newly created, different link.
+
+The end result is that the ifindex from the initial snapshot doesn't
+get a NMDevice and is not handled by NetworkManager.
+
+Fix this problem by fetching the latest version of the link from
+platform to make sure we have a consistent view of the state.
+
+https://issues.redhat.com/browse/RHEL-25808
+https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/merge_requests/1897
+(cherry picked from commit de130df3e2207dc015c4fa82ecf766be2851532c)
+(cherry picked from commit 6f3739e76f1f31d71bc3fbd7a4b0955071d59cc4)
+---
+ src/core/nm-manager.c | 17 ++++++++++++++++-
+ 1 file changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/src/core/nm-manager.c b/src/core/nm-manager.c
+index 7f94f7cd9c..a77ba9d3b1 100644
+--- a/src/core/nm-manager.c
++++ b/src/core/nm-manager.c
+@@ -4438,10 +4438,25 @@ platform_query_devices(NMManager *self)
+     links        = nm_platform_link_get_all(priv->platform);
+     if (!links)
+         return;
++
+     for (i = 0; i < links->len; i++) {
+-        const NMPlatformLink          *link = NMP_OBJECT_CAST_LINK(links->pdata[i]);
++        const NMPlatformLink          *elem = NMP_OBJECT_CAST_LINK(links->pdata[i]);
++        const NMPlatformLink          *link;
+         const NMConfigDeviceStateData *dev_state;
+ 
++        /*
++         * @links is an immutable snapshot of the platform links captured before
++         * the loop was started. It's possible that in the meantime, while
++         * processing netlink events in platform_link_added(), a link was
++         * renamed.  If that happens, we have 2 different views of the same
++         * ifindex: the one from @links and the one from platform. This can
++         * cause race conditions; make sure to use the latest known version of
++         * the link.
++         */
++        link = nm_platform_link_get(priv->platform, elem->ifindex);
++        if (!link)
++            continue;
++
+         dev_state = nm_config_device_state_get(priv->config, link->ifindex);
+         platform_link_added(self,
+                             link->ifindex,
+-- 
+2.41.0
+

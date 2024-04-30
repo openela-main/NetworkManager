@@ -1,0 +1,50 @@
+From e4fb80046cf36a7e210e8660ef50c93ef8971a5e Mon Sep 17 00:00:00 2001
+From: Beniamino Galvani <bgalvani@redhat.com>
+Date: Wed, 13 Mar 2024 10:47:31 +0100
+Subject: [PATCH 1/2] nm-dispatcher: fix crash when parsing output dictionary
+
+'stdout' is NULL when the script didn't write anything or failed.
+
+Fixes the following crash detected by NMCI in test
+'dispatcher_device_handler_dummy'.
+
+  nm-dispatcher[936339]: g_strsplit: assertion 'string != NULL' failed
+
+  build_result_options (nm-dispatcher)
+  complete_request (nm-dispatcher)
+  complete_script (nm-dispatcher)
+  script_watch_cb (nm-dispatcher)
+  g_child_watch_dispatch (libglib-2.0.so.0)
+  g_main_dispatch (libglib-2.0.so.0)
+  g_main_context_iterate (libglib-2.0.so.0)
+  g_main_context_iteration (libglib-2.0.so.0)
+  main (nm-dispatcher)
+  __libc_start_main (libc.so.6)
+  _start (nm-dispatcher)
+
+Fixes: d72f26b87528 ('dispatcher: read device-handler's stdout into a dictionary')
+
+https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/merge_requests/1889
+(cherry picked from commit e5c2c5f1c2f55c139f39830651df2c901c3a0bf9)
+(cherry picked from commit 669bf33de38a8a15e77662daadf94d6395838eee)
+---
+ src/nm-dispatcher/nm-dispatcher.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/src/nm-dispatcher/nm-dispatcher.c b/src/nm-dispatcher/nm-dispatcher.c
+index efb4ec0087..ce252b92bf 100644
+--- a/src/nm-dispatcher/nm-dispatcher.c
++++ b/src/nm-dispatcher/nm-dispatcher.c
+@@ -306,6 +306,9 @@ build_result_options(char *stdout)
+     char                          *key;
+     char                          *value;
+ 
++    if (!stdout)
++        return NULL;
++
+     lines = g_strsplit(stdout, "\n", 65);
+ 
+     for (i = 0; lines[i] && i < 64; i++) {
+-- 
+2.41.0
+

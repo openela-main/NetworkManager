@@ -1,0 +1,25 @@
+From 6e84d852487f070ab3f61c24d78fc05338f171f6 Mon Sep 17 00:00:00 2001
+From: Fernando Fernandez Mancera <ffmancera@riseup.net>
+Date: Wed, 20 Mar 2024 19:10:45 +0100
+Subject: [PATCH] cloud: drop PrivateUsers directive from nm-cloud-setup
+
+https://issues.redhat.com/browse/RHEL-27503
+---
+ src/nm-cloud-setup/nm-cloud-setup.service.in | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/src/nm-cloud-setup/nm-cloud-setup.service.in b/src/nm-cloud-setup/nm-cloud-setup.service.in
+index e73654d892..4aa6017e48 100644
+--- a/src/nm-cloud-setup/nm-cloud-setup.service.in
++++ b/src/nm-cloud-setup/nm-cloud-setup.service.in
+@@ -28,7 +28,6 @@ MemoryDenyWriteExecute=yes
+ NoNewPrivileges=yes
+ PrivateDevices=yes
+ PrivateTmp=yes
+-PrivateUsers=yes
+ ProtectClock=yes
+ ProtectControlGroups=yes
+ ProtectHome=yes
+-- 
+2.44.0
+

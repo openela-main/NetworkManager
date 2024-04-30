@@ -1,12 +1,13 @@
+
 %global wpa_supplicant_version 1:1.1
 
 %global ppp_version %(pkg-config --modversion pppd 2>/dev/null || sed -n 's/^#define\\s*VERSION\\s*"\\([^\\s]*\\)"$/\\1/p' %{_includedir}/pppd/patchlevel.h 2>/dev/null | grep . || echo bad)
 %global glib2_version %(pkg-config --modversion glib-2.0 2>/dev/null || echo bad)
 
 %global epoch_version 1
-%global real_version 1.44.0
+%global real_version 1.46.0
 %global rpm_version %{real_version}
-%global release_version 5
+%global release_version 4
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -155,10 +156,16 @@
 %global split_ifcfg_rh 0
 %endif
 
-%if 0%{?fedora} >= 36 || 0%{?rhel} >= 9
+%if (0%{?fedora} >= 36 && 0%{?fedora} < 39) || 0%{?rhel} >= 9
 %global ifcfg_warning 1
 %else
 %global ifcfg_warning 0
+%endif
+
+%if 0%{?fedora} >= 39
+%global ifcfg_migrate 1
+%else
+%global ifcfg_migrate 0
 %endif
 
 %if 0%{?fedora}
@@ -185,7 +192,7 @@ Epoch: %{epoch_version}
 Version: %{rpm_version}
 Release: %{release_version}%{?snap}%{?dist}
 Group: System Environment/Base
-License: GPLv2+ and LGPLv2+
+License: GPL-2.0-or-later AND LGPL-2.1-or-later
 URL: https://networkmanager.dev/
 
 Source: https://download.gnome.org/sources/NetworkManager/%{real_version_major}/%{name}-%{real_version}.tar.xz
@@ -193,19 +200,24 @@ Source1: NetworkManager.conf
 Source2: 00-server.conf
 Source4: 20-connectivity-fedora.conf
 Source5: 20-connectivity-redhat.conf
-Source6: 70-nm-connectivity.conf
-Source7: readme-ifcfg-rh.txt
+Source6: 22-wifi-mac-addr.conf
+Source7: 70-nm-connectivity.conf
+Source8: readme-ifcfg-rh.txt
+Source9: readme-ifcfg-rh-migrated.txt
 
 # RHEL downstream patches that change behavior from upstream.
 # These are not bugfixes, hence they are also relevant after
 # the next rebase of the source tarball.
 # Patch0001: 0001-some.patch
+Patch0001: 0001-revert-change-default-value-for-ipv4.dad-timeout-from-0-to-200ms.patch
 
 # Bugfixes that are only relevant until next rebase of the package.
-Patch1001: 1001-nm-manager-ensure-device-is-exported-on-D-Bus-in-aut-rhbz2210271.patch
-Patch1002: 1002-checkpoint-Fix-segfault-crash-when-rollback-rhel-1526.patch
-Patch1003: 1003-better-way-for-dns-changes-RHEL-14889.patch
-Patch1004: 1004-bridge-skip-VLAN-filtering-resetting-in-reapply-RHEL-25061.patch
+# Patch1001: 1001-some.patch
+Patch1001: 1001-drop-privateusers-directive-from-nm-cloud-setup-rhel27053.patch
+Patch1002: 1002-allow-rollback-on-internal-global-dns-rhel-29725.patch
+Patch1003: 1003-do-not-allow-ovs-bridge-and-port-to-be-parent-rhel-28545.patch
+Patch1004: 1004-nm-dispatcher-fix-crash-rhel28973.patch
+Patch1005: 1005-fix-race-condition-while-enumerating-devices-rhel25808.patch
 
 Requires(post): systemd
 %if 0%{?fedora} || 0%{?rhel} >= 8
@@ -224,7 +236,7 @@ Requires: libndp >= %{libndp_version}
 %endif
 Obsoletes: NetworkManager < %{obsoletes_device_plugins}
 Obsoletes: NetworkManager < %{obsoletes_ppp_plugin}
-Obsoletes: NetworkManager-wimax < 1.2
+Obsoletes: NetworkManager-wimax < 1:1.2
 %if 0%{?rhel} && 0%{?rhel} == 8
 Suggests: NetworkManager-initscripts-updown
 %endif
@@ -295,21 +307,10 @@ BuildRequires: mobile-broadband-provider-info-devel
 BuildRequires: newt-devel
 %endif
 BuildRequires: /usr/bin/dbus-launch
-%if 0%{?fedora} >= 28 || 0%{?rhel} >= 8
 BuildRequires: python3
 BuildRequires: python3-gobject-base
 BuildRequires: python3-dbus
 BuildRequires: python3-pexpect
-%else
-BuildRequires: python2
-BuildRequires: pygobject3-base
-BuildRequires: dbus-python
-BuildRequires: pexpect
-%if 0%{?rhel} >= 7 && %{with meson}
-BuildRequires: python36-dbus
-BuildRequires: python36-gobject
-%endif
-%endif
 BuildRequires: libselinux-devel
 BuildRequires: polkit-devel
 BuildRequires: jansson-devel
@@ -392,7 +393,7 @@ Obsoletes: NetworkManager < %{obsoletes_device_plugins}
 # Team was split from main NM binary between 0.9.10 and 1.0
 # We need this Obsoletes in addition to the one above
 # (git:3aede801521ef7bff039e6e3f1b3c7b566b4338d).
-Obsoletes: NetworkManager < 1.0.0
+Obsoletes: NetworkManager < 1:1.0.0
 %endif
 
 %description team
@@ -480,7 +481,7 @@ This package contains NetworkManager support for PPP.
 Summary: Libraries for adding NetworkManager support to applications.
 Group: Development/Libraries
 Conflicts: NetworkManager-glib < 1:1.31.0
-License: LGPLv2+
+License: LGPL-2.1-or-later
 
 %description libnm
 This package contains the libraries that make it easier to use some
@@ -493,7 +494,7 @@ Group: Development/Libraries
 Requires: %{name}-libnm%{?_isa} = %{epoch}:%{version}-%{release}
 Requires: glib2-devel
 Requires: pkgconfig
-License: LGPLv2+
+License: LGPL-2.1-or-later
 
 %description libnm-devel
 This package contains the header and pkg-config files for development
@@ -743,6 +744,9 @@ Preferably use nmcli instead.
 %if %{?config_plugins_default_ifcfg_rh}
 	-Dconfig_plugins_default=ifcfg-rh \
 %endif
+%if %{?ifcfg_migrate}
+	-Dconfig_migrate_ifcfg_rh_default=true \
+%endif
 	-Dresolvconf=no \
 	-Dnetconfig=no \
 	-Dconfig_dns_rc_manager_default=%{dns_rc_manager_default} \
@@ -888,6 +892,9 @@ autoreconf --install --force
 %if %{?config_plugins_default_ifcfg_rh}
 	--with-config-plugins-default=ifcfg-rh \
 %endif
+%if %{?ifcfg_migrate}
+	--with-config-migrate-ifcfg-rh-default=yes \
+%endif
 	--with-resolvconf=no \
 	--with-netconfig=no \
 	--with-config-dns-rc-manager-default=%{dns_rc_manager_default} \
@@ -915,11 +922,18 @@ cp %{SOURCE4} %{buildroot}%{nmlibdir}/conf.d/
 %if %{with connectivity_redhat}
 cp %{SOURCE5} %{buildroot}%{nmlibdir}/conf.d/
 mkdir -p %{buildroot}%{_sysctldir}
-cp %{SOURCE6} %{buildroot}%{_sysctldir}
+cp %{SOURCE7} %{buildroot}%{_sysctldir}
+%endif
+
+%if 0%{?fedora} >= 40
+cp %{SOURCE6} %{buildroot}%{nmlibdir}/conf.d/
 %endif
 
 %if 0%{?ifcfg_warning}
-cp %{SOURCE7} %{buildroot}%{_sysconfdir}/sysconfig/network-scripts
+cp %{SOURCE8} %{buildroot}%{_sysconfdir}/sysconfig/network-scripts
+%endif
+%if 0%{?ifcfg_migrate}
+cp %{SOURCE9} %{buildroot}%{_sysconfdir}/sysconfig/network-scripts/readme-ifcfg-rh.txt
 %endif
 
 cp examples/dispatcher/10-ifcfg-rh-routes.sh %{buildroot}%{nmlibdir}/dispatcher.d/
@@ -1066,6 +1080,9 @@ fi
 %dir %{_sysconfdir}/%{name}/dnsmasq-shared.d
 %dir %{_sysconfdir}/%{name}/system-connections
 %config(noreplace) %{_sysconfdir}/%{name}/NetworkManager.conf
+%if 0%{?fedora} >= 40
+%{nmlibdir}/conf.d/22-wifi-mac-addr.conf
+%endif
 %ghost %{_sysconfdir}/%{name}/VPN
 %{_bindir}/nm-online
 %{_libexecdir}/nm-dhcp-helper
@@ -1112,7 +1129,7 @@ fi
 %{_unitdir}/nm-priv-helper.service
 %dir %{_datadir}/doc/NetworkManager/examples
 %{_datadir}/doc/NetworkManager/examples/server.conf
-%if 0%{?ifcfg_warning}
+%if 0%{?ifcfg_warning} || 0%{?ifcfg_migrate}
 %{_sysconfdir}/sysconfig/network-scripts/readme-ifcfg-rh.txt
 %endif
 %doc NEWS AUTHORS README.md CONTRIBUTING.md
@@ -1255,11 +1272,81 @@ fi
 
 
 %changelog
-* Wed Feb 21 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.44.0-5
-- skip VLAN filtering resetting in reapply if no vlan change changed (RHEL-25061)
+* Tue Mar 26 2024 Beniamino Galvani <bgalvani@redhat.com> - 1:1.46.0-4
+- Fix nm-dispatcher crash (RHEL-28973)
+- Fix race condition while enumerating devices (RHEL-25808)
 
-* Fri Nov 17 2023 Íñigo Huguet <ihuguet@redhat.com> - 1:1.44.0-4
-- Add 'dns-change' dispatch event (RHEL-14889)
+* Fri Mar 22 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.46.0-3
+- Upgrade release number to build with the right target
+
+* Wed Mar 20 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1.46.0-2
+- Drop PrivateUser directive from nm-cloud-setup service (RHEL-27503)
+- Support rollback on global DNS (RHEL-29725)
+- Do not allow OVS bridge or port to be parent (RHEL-28545)
+
+* Thu Feb 22 2024 Stanislas FAYE <sfaye@redhat.com> - 1.46.0-1
+- Update to 1.46.0 release
+- Fix DHCPv4 lease can't be renewed after it expires (RHEL-24127)
+- Support the MACsec offload mode (RHEL-24337)
+- Support creating generic devices via external "device-handler" dispatcher (RHEL-1567)
+- Support changing the eswitch mode (RHEL-1441)
+
+* Fri Feb 09 2024 Íñigo Huguet <ihuguet@redhat.com> - 1.45.91-1
+- Update to 1.45.91 release (release candidate)
+- Support changing the DSCP header field for DHCP packets, and set the default to CS0 (RHEL-16040)
+- Deprecate connection.autoconnect-slaves in favour of autoconnect-ports (RHEL-17621)
+- Don't reset bridge's PVID in reapply if it didn't change (RHEL-21576)
+
+* Thu Jan 25 2024 Stanislas FAYE <sfaye@redhat.com> - 1.45.90-1
+- Update to 1.45.90 release (release candidate)
+- Deprecate and Replace connection.slave-type in libnm-core and libnm (RHEL-17620)
+- [RFE] Support assigning IPv4 static route to interface without IPv4 address (RHEL-5098)
+
+* Mon Jan 15 2024 Stanislas FAYE <sfaye@redhat.com> - 1.45.10-1
+- Update to 1.45.10 (development)
+- Deprecate and Replace connection.master in libnm-core and libnm (RHEL-17619)
+
+* Thu Dec 14 2023 Ján Václav <jvaclav@redhat.com> - 1.45.9-1
+- Update to 1.45.9 (development)
+- Add support for PRP/HSR interface (RHEL-5852)
+- Drop support for the 'slaves-order' option in NetworkManager.conf (RHEL-19437)
+- Return error when setting invalid IP addresses or properties via D-Bus (RHEL-19315)
+- Fix extra route being created besides ECMP route (RHEL-1682)
+
+* Wed Nov 29 2023 Beniamino Galvani <bgalvani@redhat.com> - 1.45.8-1
+- Update to 1.45.8 (development)
+- Introduce "stable-ssid" option for wifi.cloned-mac-address property (RHEL-16470)
+
+* Thu Nov 16 2023 Íñigo Huguet <ihuguet@redhat.com> - 1.45.7-1
+- Update to 1.45.7 release (development)
+- Migrate to SPDX license
+
+* Wed Nov  1 2023 Beniamino Galvani <bgalvani@redhat.com> - 1.45.6-1
+- Update to 1.45.6 release (development)
+- Fix ovs activation with netdev datapath and cloned MAC (RHEL-5886)
+
+* Wed Oct 18 2023 Íñigo Huguet <ihuguet@redhat.com> - 1.45.5-1
+- Update to 1.45.5 release (development)
+- Various fixes to Duplicate Address Detection (DAD) (RHEL-1581, RHEL-1411)
+- New option to avoid sending the DHCPv4 client-identifier (RHEL-1469)
+- Support setting channels in ethtool options (RHEL-1471)
+
+* Wed Oct 04 2023 Íñigo Huguet <ihuguet@redhat.com> - 1.45.4-1
+- Update to 1.45.4 release (development)
+- Add 'dns-change' dispatcher event (RHEL-1671)
+
+* Fri Sep 22 2023 Beniamino Galvani <bgalvani@redhat.com> - 1.45.3-1
+- Update to 1.45.3 release (development)
+- Improve explanation of the format and routes properties in keyfile man page (RHEL-1407)
+- Improve nm-settings-nmcli manpage to show format and valid values of properties (RHEL-2465)
+- Honor the autoactivate priority for port connections (RHEL-2202)
+- Properly document valid values for ip-tunnel properties (RHEL-1459)
+
+* Wed Sep  6 2023 Beniamino Galvani <bgalvani@redhat.com> - 1.45.2-1
+- update to 1.45.2 release (development)
+
+* Mon Sep 04 2023 Gris Ge <fge@redhat.com> - 1.44.0-4
+- Rebuild for RHEL 9.4
 
 * Wed Aug 30 2023 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.44.0-3 
 - checkpoint: Fix segfault crash when rollback (rhel-1526)
