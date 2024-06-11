@@ -1,0 +1,210 @@
+From ed5cbbc5847527ed0cfc33f521f7c724975c846b Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=8D=C3=B1igo=20Huguet?= <ihuguet@redhat.com>
+Date: Tue, 30 Apr 2024 12:45:04 +0200
+Subject: [PATCH] platform: avoid routes resync for routes that we don't track
+
+When we recibe a Netlink message with a "route change" event, normally
+we just ignore it if it's a route that we don't track (i.e. because of
+the route protocol).
+
+However, it's not that easy if it has the NLM_F_REPLACE flag because
+that means that it might be replacing another route. If the kernel has
+similar routes which are candidates for the replacement, it's hard for
+NM to guess which one of those is being replaced (as the kernel doesn't
+have a "route ID" or similar field to indicate it). Moreover, the kernel
+might choose to replace a route that we don't have on cache, so we know
+nothing about it.
+
+It is important to note that we cannot just discard Netlink messages of
+routes that we don't track if they has the NLM_F_REPLACE. For example,
+if we are tracking a route with proto=static, we might receive a replace
+message, changing that route to proto=other_proto_that_we_dont_track. We
+need to process that message and remove the route from our cache.
+
+As NM doesn't know what route is being replaced, trying to guess will
+lead to errors that will leave the cache in an inconsistent state.
+Because of that, it just do a cache resync for the routes.
+
+For IPv4 there was an optimization to this: if we don't have in the
+cache any route candidate for the replacement there are only 2 possible
+options: either add the new route to the cache or discard it if we are
+not interested on it. We don't need a resync for that.
+
+This commit is extending that optimization to IPv6 routes. There is no
+reason why it shouldn't work in the same way than with IPv4. This
+optimization will only work well as long as we find potential candidate
+routes in the same way than the kernel (comparing the same fields). NM
+calls to this "comparing by WEAK_ID". But this can also happen with IPv4
+routes.
+
+It is worth it to enable this optimization because there are routing
+daemons using custom routing protocols that makes tens or hundreds of
+updates per second. If they use NLM_F_REPLACE, this caused NM to do a
+resync hundreds of times per second leading to a 100% CPU usage:
+https://issues.redhat.com/browse/RHEL-26195
+
+An additional but smaller optimization is done in this commit: if we
+receive a route message for routes that we don't track AND doesn't have
+the NLM_F_REPLACE flag, we can ignore the entire message, thus avoiding
+the memory allocation of the nmp_object. That nmp_object was going to be
+ignored later, anyway, so better to avoid these allocations that, with
+the routing daemon of the above's example, can happen hundreds of times
+per second.
+
+With this changes, the CPU usage doing `ip route replace` 300 times/s
+drops from 100% to 1%. Doing `ip route replace` as fast as possible,
+without any rate limitting, still keeps NM with a 3% CPU usage in the
+system that I have used to test.
+
+(cherry picked from commit 4d426f581de402e0aebd2ab273ff6649a0a6fee6)
+(cherry picked from commit 15ffa8ec6ff7bf43ed1eb123c0d419d6fab8b268)
+---
+ src/libnm-platform/nm-linux-platform.c | 69 ++++++++++++++++----------
+ src/libnm-platform/nmp-object.c        | 22 +++++---
+ 2 files changed, 57 insertions(+), 34 deletions(-)
+
+diff --git a/src/libnm-platform/nm-linux-platform.c b/src/libnm-platform/nm-linux-platform.c
+index 9ecac2d9b3..5b595a9b71 100644
+--- a/src/libnm-platform/nm-linux-platform.c
++++ b/src/libnm-platform/nm-linux-platform.c
+@@ -3903,6 +3903,34 @@ _new_from_nl_addr(const struct nlmsghdr *nlh, gboolean id_only)
+     return g_steal_pointer(&obj);
+ }
+ 
++static gboolean
++ip_route_is_tracked(guint8 proto, guint8 type)
++{
++    if (proto > RTPROT_STATIC && !NM_IN_SET(proto, RTPROT_DHCP, RTPROT_RA)) {
++        /* We ignore certain rtm_protocol, because NetworkManager would only ever
++         * configure certain protocols. Other routes are not configured by NetworkManager
++         * and we don't track them in the platform cache.
++         *
++         * This is to help with the performance overhead of a huge number of
++         * routes, for example with the bird BGP software, that adds routes
++         * with RTPROT_BIRD protocol. */
++        return FALSE;
++    }
++
++    if (!NM_IN_SET(type,
++                   RTN_UNICAST,
++                   RTN_LOCAL,
++                   RTN_BLACKHOLE,
++                   RTN_UNREACHABLE,
++                   RTN_PROHIBIT,
++                   RTN_THROW)) {
++        /* Certain route types are ignored and not placed into the cache. */
++        return FALSE;
++    }
++
++    return TRUE;
++}
++
+ /* Copied and heavily modified from libnl3's rtnl_route_parse() and parse_multipath(). */
+ static NMPObject *
+ _new_from_nl_route(const struct nlmsghdr *nlh, gboolean id_only, ParseNlmsgIter *parse_nlmsg_iter)
+@@ -3963,6 +3991,16 @@ _new_from_nl_route(const struct nlmsghdr *nlh, gboolean id_only, ParseNlmsgIter
+      * only handle ~supported~ routes.
+      *****************************************************************/
+ 
++    /* If it's a route that we don't need to track, abort here to avoid unnecessary
++     * memory allocations to create the nmp_object. However, if the message has the
++     * NLM_F_REPLACE flag, it might be replacing a route that we were tracking so we
++     * have to stop tracking it. That means that we have to process all messages with
++     * NLM_F_REPLACE. See nmp_cache_update_netlink_route().
++     */
++    if (!ip_route_is_tracked(rtm->rtm_protocol, rtm->rtm_type)
++        && !(nlh->nlmsg_flags & NLM_F_REPLACE))
++        return NULL;
++
+     addr_family = rtm->rtm_family;
+ 
+     if (addr_family == AF_INET)
+@@ -5519,39 +5557,18 @@ ip_route_get_lock_flag(const NMPlatformIPRoute *route)
+ static gboolean
+ ip_route_is_alive(const NMPlatformIPRoute *route)
+ {
+-    guint8 prot;
++    guint8 proto, type;
+ 
+     nm_assert(route);
+     nm_assert(route->rt_source >= NM_IP_CONFIG_SOURCE_RTPROT_UNSPEC
+               && route->rt_source <= _NM_IP_CONFIG_SOURCE_RTPROT_LAST);
+ 
+-    prot = route->rt_source - 1;
+-
+-    nm_assert(nmp_utils_ip_config_source_from_rtprot(prot) == route->rt_source);
+-
+-    if (prot > RTPROT_STATIC && !NM_IN_SET(prot, RTPROT_DHCP, RTPROT_RA)) {
+-        /* We ignore certain rtm_protocol, because NetworkManager would only ever
+-         * configure certain protocols. Other routes are not configured by NetworkManager
+-         * and we don't track them in the platform cache.
+-         *
+-         * This is to help with the performance overhead of a huge number of
+-         * routes, for example with the bird BGP software, that adds routes
+-         * with RTPROT_BIRD protocol. */
+-        return FALSE;
+-    }
++    proto = route->rt_source - 1;
++    type  = nm_platform_route_type_uncoerce(route->type_coerced);
+ 
+-    if (!NM_IN_SET(nm_platform_route_type_uncoerce(route->type_coerced),
+-                   RTN_UNICAST,
+-                   RTN_LOCAL,
+-                   RTN_BLACKHOLE,
+-                   RTN_UNREACHABLE,
+-                   RTN_PROHIBIT,
+-                   RTN_THROW)) {
+-        /* Certain route types are ignored and not placed into the cache. */
+-        return FALSE;
+-    }
++    nm_assert(nmp_utils_ip_config_source_from_rtprot(proto) == route->rt_source);
+ 
+-    return TRUE;
++    return ip_route_is_tracked(proto, type);
+ }
+ 
+ /* Copied and modified from libnl3's build_route_msg() and rtnl_route_build_msg(). */
+diff --git a/src/libnm-platform/nmp-object.c b/src/libnm-platform/nmp-object.c
+index 4090da71a3..cb4e9764d1 100644
+--- a/src/libnm-platform/nmp-object.c
++++ b/src/libnm-platform/nmp-object.c
+@@ -2988,6 +2988,13 @@ nmp_cache_update_netlink_route(NMPCache         *cache,
+          * Since we don't cache all routes (see "route_is_alive"), we cannot know
+          * with certainty which route was replaced.
+          *
++         * For example, the kernel might have 3 similar routes (same WEAK_ID), one
++         * of which is not tracked by us so we don't have it into the cache. If we
++         * receive a route replace message, we don't know to what of the 3 routes
++         * it affects (one of the 3 we don't even know that exists). Moreover, if
++         * we only have one route on cache, we don't know if the replace is for a
++         * different one that we don't track.
++         *
+          * Even if we would cache *all* routes (which we cannot, if kernel adds new
+          * routing features that modify the known nmp_object_id_equal()), it would
+          * be hard to find the right route that was replaced. Well, probably we
+@@ -3002,15 +3009,14 @@ nmp_cache_update_netlink_route(NMPCache         *cache,
+          * [2] https://bugzilla.redhat.com/show_bug.cgi?id=1337860
+          *
+          * We need to resync.
++         *
++         * However, a resync is expensive. Think of a routing daemon that updates
++         * hundreds of routes per second, the performance penalty is huge. We can
++         * optimize it: if we don't have any matching route on cache (by WEAK_ID),
++         * we don't have anything to replace and we don't need a full resync, but
++         * only to add or discard the new route as usual.
+          */
+-        if (NMP_OBJECT_GET_TYPE(obj_hand_over) == NMP_OBJECT_TYPE_IP4_ROUTE
+-            && !nmp_cache_lookup_all(cache, NMP_CACHE_ID_TYPE_ROUTES_BY_WEAK_ID, obj_hand_over)) {
+-            /* For IPv4, we can do a small optimization. We skip the resync, if we have
+-             * no conflicting routes (by weak-id).
+-             *
+-             * This optimization does not work for IPv6 (maybe should be fixed).
+-             */
+-        } else {
++        if (nmp_cache_lookup_all(cache, NMP_CACHE_ID_TYPE_ROUTES_BY_WEAK_ID, obj_hand_over)) {
+             entry_replace   = NULL;
+             resync_required = TRUE;
+             goto out;
+-- 
+2.44.0
+

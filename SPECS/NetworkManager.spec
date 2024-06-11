@@ -7,7 +7,7 @@
 %global epoch_version 1
 %global real_version 1.46.0
 %global rpm_version %{real_version}
-%global release_version 4
+%global release_version 8
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -218,6 +218,9 @@ Patch1002: 1002-allow-rollback-on-internal-global-dns-rhel-29725.patch
 Patch1003: 1003-do-not-allow-ovs-bridge-and-port-to-be-parent-rhel-28545.patch
 Patch1004: 1004-nm-dispatcher-fix-crash-rhel28973.patch
 Patch1005: 1005-fix-race-condition-while-enumerating-devices-rhel25808.patch
+Patch1006: 1006-fix-lldp-for-ovs-bridge-ports-rhel31766.patch
+Patch1007: 1007-platform-avoid-routes-resync-rhel36162.patch
+Patch1008: 1008-checkpoint-preserve-in-memory-state-rhel32493.patch
 
 Requires(post): systemd
 %if 0%{?fedora} || 0%{?rhel} >= 8
@@ -1272,6 +1275,18 @@ fi
 
 
 %changelog
+* Thu May 23 2024 Beniamino Galvani <bgalvani@redhat.com> - 1:1.46.0-8
+- Preserve in-memory state of connections after checkpoint/rollback (RHEL-32493)
+
+* Tue May 14 2024 Íñigo Huguet <ihuguet@redhat.com> - 1:1.46.0-7
+- Fix CPU usage of 100% when updating routes cache (RHEL-36162)
+
+* Mon Apr 08 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.46.0-6
+- Rebuild because build must go on 0day not 9.4.0
+
+* Fri Apr 05 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.46.0-5
+- Fix LLDP for OVS Bridge ports (RHEL-31766)
+
 * Tue Mar 26 2024 Beniamino Galvani <bgalvani@redhat.com> - 1:1.46.0-4
 - Fix nm-dispatcher crash (RHEL-28973)
 - Fix race condition while enumerating devices (RHEL-25808)

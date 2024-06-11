@@ -1,0 +1,40 @@
+From 6394c2b262d86824a41ca82ad76288c06bfd1989 Mon Sep 17 00:00:00 2001
+From: Fernando Fernandez Mancera <ffmancera@riseup.net>
+Date: Tue, 26 Mar 2024 12:53:27 +0100
+Subject: [PATCH] libnm-lldp: use ETH_P_ALL instead of NM_ETHERTYPE_LLDP for
+ the socket
+
+When creating the socket for listening to LLDP frames we are setting
+NM_ETHERTYPE_LLDP (0x88cc) as protocol. In most of the cases, that is
+correct but when the interface is attached as a port to a OVS bridge,
+kernel is not matching the protocol correctly. The reason might be that
+some metadata is added to the packet, but we are not completely sure
+about it.
+
+Instead, we should use ETH_P_ALL to match all the protocols. Later, we
+have a eBPF filter to drop the packet by multicast MAC address or
+protocol. This is how lldpd is doing it for example.
+
+https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/merge_requests/1903
+(cherry picked from commit 9ac1d6e22bfac7f576dec034a26ac7c9012e5b80)
+(cherry picked from commit 2fac176986f3afaa84242e069613cc543bfcc58c)
+---
+ src/libnm-lldp/nm-lldp-network.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/libnm-lldp/nm-lldp-network.c b/src/libnm-lldp/nm-lldp-network.c
+index 811c3a7291..28cc745249 100644
+--- a/src/libnm-lldp/nm-lldp-network.c
++++ b/src/libnm-lldp/nm-lldp-network.c
+@@ -46,7 +46,7 @@ nm_lldp_network_bind_raw_socket(int ifindex)
+ 
+     assert(ifindex > 0);
+ 
+-    fd = socket(AF_PACKET, SOCK_RAW | SOCK_CLOEXEC | SOCK_NONBLOCK, htobe16(NM_ETHERTYPE_LLDP));
++    fd = socket(AF_PACKET, SOCK_RAW | SOCK_CLOEXEC | SOCK_NONBLOCK, htobe16(ETH_P_ALL));
+     if (fd < 0)
+         return -errno;
+ 
+-- 
+2.44.0
+
