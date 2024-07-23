@@ -7,7 +7,7 @@
 %global epoch_version 1
 %global real_version 1.46.0
 %global rpm_version %{real_version}
-%global release_version 8
+%global release_version 13
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -221,6 +221,8 @@ Patch1005: 1005-fix-race-condition-while-enumerating-devices-rhel25808.patch
 Patch1006: 1006-fix-lldp-for-ovs-bridge-ports-rhel31766.patch
 Patch1007: 1007-platform-avoid-routes-resync-rhel36162.patch
 Patch1008: 1008-checkpoint-preserve-in-memory-state-rhel32493.patch
+Patch1010: 1010-allow-ip-configurations-without-addresses-rhel28544.patch
+Patch1011: 1011-vpn-handle-hint-tags-in-the-daemon-rhel44712.patch
 
 Requires(post): systemd
 %if 0%{?fedora} || 0%{?rhel} >= 8
@@ -552,6 +554,7 @@ Group: System Environment/Base
 %if 0%{?split_ifcfg_rh}
 Requires: %{name}-initscripts-ifcfg-rh
 %endif
+Requires: ipcalc
 BuildArch: noarch
 Provides: %{name}-config-routing-rules = %{epoch}:%{version}-%{release}
 Obsoletes: %{name}-config-routing-rules < 1:1.31.0
@@ -1275,6 +1278,21 @@ fi
 
 
 %changelog
+* Fri Jun 28 2024 Beniamino Galvani <bgalvani@redhat.com> - 1:1.46.0-13
+- Revert "Fix port reactivation when controller is deactivating" (RHEL-32646)
+
+* Thu Jun 27 2024 Íñigo Huguet <ihuguet@redhat.com> - 1:1.46.0-12
+- Add ipcalc as dependency of NetworkManager-dispatcher-routing-rules (RHEL-43583)
+
+* Mon Jun 24 2024 Íñigo Huguet <ihuguet@redhat.com> - 1:1.46.0-11
+- Handle hint's tags from VPN secrets in the daemon (RHEL-44712)
+
+* Mon Jun 17 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.46.0-10
+- Support IPv6 in IPSec VPN (RHEL-28544)
+
+* Sat Jun 01 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.46.0-9
+- Fix port reactivation when controller is deactivating (RHEL-32646)
+
 * Thu May 23 2024 Beniamino Galvani <bgalvani@redhat.com> - 1:1.46.0-8
 - Preserve in-memory state of connections after checkpoint/rollback (RHEL-32493)
 

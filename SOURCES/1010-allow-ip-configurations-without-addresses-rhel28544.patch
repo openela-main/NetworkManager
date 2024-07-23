@@ -1,0 +1,398 @@
+From 3806d476ab8c45a8ea534be064515744ccea16e2 Mon Sep 17 00:00:00 2001
+From: Beniamino Galvani <bgalvani@redhat.com>
+Date: Tue, 7 May 2024 17:51:19 +0200
+Subject: [PATCH 1/4] vpn: allow IP configurations without addresses
+
+An IPv4-over-IPv6 (or vice-versa) IPsec VPN can return IP
+configurations with routes and without addresses. For example, in this
+scenario:
+
+         +---------------+         +---------------+
+         |  fd01::10/64  <-- VPN -->  fd02::20/64  |
+         |     host1     |         |     host2     |
+         +-------^-------+         +-------^-------+
+                 |                         |
+         +-------v-------+         +-------v-------+
+         |    subnet1    |         |    subnet2    |
+         | 172.16.1.0/24 |         | 172.16.2.0/24 |
+         +---------------+         +---------------+
+
+host1 and host2 establish a IPv6 tunnel which encapsulates packets
+between the two IPv4 subnets. Therefore, in routed mode, host1 will
+need to configure a route like "172.16.2.0/24 via ipsec1" even if the
+host doesn't have any IPv4 address on the VPN interface.
+
+Accept IP configurations without address from the VPN; only check that
+the address and prefix are sane if they are provided.
+
+(cherry picked from commit 97f185e1f8e5a60d770711d8bce8bd12a205590f)
+(cherry picked from commit 518b7c5bd51d3f652c8179594a522f6ddf93f449)
+(cherry picked from commit 476a9553f61c4bd6f0c8dec476b3179de6cf2293)
+---
+ src/core/vpn/nm-vpn-connection.c | 44 ++++++++++++++++++++------------
+ 1 file changed, 27 insertions(+), 17 deletions(-)
+
+diff --git a/src/core/vpn/nm-vpn-connection.c b/src/core/vpn/nm-vpn-connection.c
+index 3dba9ff6c8..62aecbd286 100644
+--- a/src/core/vpn/nm-vpn-connection.c
++++ b/src/core/vpn/nm-vpn-connection.c
+@@ -1988,6 +1988,12 @@ _dbus_signal_ip_config_cb(NMVpnConnection *self, int addr_family, GVariant *dict
+ 
+     nm_l3_config_data_set_dns_priority(l3cd, AF_INET, NM_DNS_PRIORITY_DEFAULT_VPN);
+ 
++    _vardict_to_addr(addr_family,
++                     dict,
++                     IS_IPv4 ? NM_VPN_PLUGIN_IP4_CONFIG_INT_GATEWAY
++                             : NM_VPN_PLUGIN_IP6_CONFIG_INT_GATEWAY,
++                     &priv->ip_data_x[IS_IPv4].gw_internal);
++
+     if (IS_IPv4) {
+         address.a4 = (NMPlatformIP4Address){
+             .plen = 24,
+@@ -1998,16 +2004,17 @@ _dbus_signal_ip_config_cb(NMVpnConnection *self, int addr_family, GVariant *dict
+         };
+     }
+ 
+-    _vardict_to_addr(addr_family,
+-                     dict,
+-                     IS_IPv4 ? NM_VPN_PLUGIN_IP4_CONFIG_INT_GATEWAY
+-                             : NM_VPN_PLUGIN_IP6_CONFIG_INT_GATEWAY,
+-                     &priv->ip_data_x[IS_IPv4].gw_internal);
+-
+-    _vardict_to_addr(addr_family,
+-                     dict,
+-                     IS_IPv4 ? NM_VPN_PLUGIN_IP4_CONFIG_ADDRESS : NM_VPN_PLUGIN_IP6_CONFIG_ADDRESS,
+-                     address.ax.address_ptr);
++    if (_vardict_to_addr(addr_family,
++                         dict,
++                         IS_IPv4 ? NM_VPN_PLUGIN_IP4_CONFIG_ADDRESS
++                                 : NM_VPN_PLUGIN_IP6_CONFIG_ADDRESS,
++                         address.ax.address_ptr)
++        && nm_ip_addr_is_null(addr_family, &address.ax.address_ptr)) {
++        _LOGW("invalid IP%c config received: address is zero",
++              nm_utils_addr_family_to_char(addr_family));
++        _check_complete(self, FALSE);
++        return;
++    }
+ 
+     if (!_vardict_to_addr(addr_family,
+                           dict,
+@@ -2024,17 +2031,20 @@ _dbus_signal_ip_config_cb(NMVpnConnection *self, int addr_family, GVariant *dict
+                          &u32))
+         address.ax.plen = u32;
+ 
+-    if (address.ax.plen > 0 && address.ax.plen <= (IS_IPv4 ? 32 : 128)
+-        && !nm_ip_addr_is_null(addr_family, &address.ax.address_ptr)) {
+-        address.ax.addr_source = NM_IP_CONFIG_SOURCE_VPN;
+-        nm_l3_config_data_add_address(l3cd, addr_family, NULL, &address.ax);
+-    } else {
+-        _LOGW("invalid IP%c config received: no valid IP address/prefix",
+-              nm_utils_addr_family_to_char(addr_family));
++    if (!nm_ip_addr_is_null(addr_family, &address.ax.address_ptr)
++        && (address.ax.plen == 0 || address.ax.plen > (IS_IPv4 ? 32 : 128))) {
++        _LOGW("invalid IP%c config received: invalid prefix %u",
++              nm_utils_addr_family_to_char(addr_family),
++              address.ax.plen);
+         _check_complete(self, FALSE);
+         return;
+     }
+ 
++    if (!nm_ip_addr_is_null(addr_family, &address.ax.address_ptr)) {
++        address.ax.addr_source = NM_IP_CONFIG_SOURCE_VPN;
++        nm_l3_config_data_add_address(l3cd, addr_family, NULL, &address.ax);
++    }
++
+     if (IS_IPv4) {
+         if (g_variant_lookup(dict, NM_VPN_PLUGIN_IP4_CONFIG_DNS, "au", &var_iter)) {
+             while (g_variant_iter_next(var_iter, "u", &u32))
+-- 
+2.45.2
+
+
+From 044f85613f09861d908045feda6d6f3b499d75b5 Mon Sep 17 00:00:00 2001
+From: Beniamino Galvani <bgalvani@redhat.com>
+Date: Wed, 8 May 2024 10:49:27 +0200
+Subject: [PATCH 2/4] core: rename l3cd's "dhcp_enabled" to
+ "allow_routes_without_address"
+
+The name "dhcp_enabled" is misleading because the flag is set for
+method=auto, which doesn't necessarily imply DHCP. Also, it doesn't
+convey what the flag is used for. Rename it to
+"allow_routes_without_address".
+
+(cherry picked from commit b31febea22485d3dd063cfff8fc61c1e3901a7ca)
+(cherry picked from commit 6897b6ecfdd5ed2e50c7db45a4ea3c7c7998d908)
+(cherry picked from commit ea731bba9b1f5a22e48c0a6c1881bc91c3cf1032)
+---
+ src/core/nm-l3-config-data.c | 68 +++++++++++++++++++-----------------
+ src/core/nm-l3-config-data.h |  3 +-
+ src/core/nm-l3cfg.c          |  9 +++--
+ 3 files changed, 41 insertions(+), 39 deletions(-)
+
+diff --git a/src/core/nm-l3-config-data.c b/src/core/nm-l3-config-data.c
+index a4647116a9..fbee1bf7e8 100644
+--- a/src/core/nm-l3-config-data.c
++++ b/src/core/nm-l3-config-data.c
+@@ -157,8 +157,8 @@ struct _NML3ConfigData {
+     bool has_routes_with_type_local_6_set : 1;
+     bool has_routes_with_type_local_4_val : 1;
+     bool has_routes_with_type_local_6_val : 1;
+-    bool dhcp_enabled_4 : 1;
+-    bool dhcp_enabled_6 : 1;
++    bool allow_routes_without_address_4 : 1;
++    bool allow_routes_without_address_6 : 1;
+ 
+     bool ndisc_hop_limit_set : 1;
+     bool ndisc_reachable_time_msec_set : 1;
+@@ -678,26 +678,28 @@ nm_l3_config_data_new(NMDedupMultiIndex *multi_idx, int ifindex, NMIPConfigSourc
+ 
+     self  = g_slice_new(NML3ConfigData);
+     *self = (NML3ConfigData){
+-        .ref_count                     = 1,
+-        .ifindex                       = ifindex,
+-        .multi_idx                     = nm_dedup_multi_index_ref(multi_idx),
+-        .mdns                          = NM_SETTING_CONNECTION_MDNS_DEFAULT,
+-        .llmnr                         = NM_SETTING_CONNECTION_LLMNR_DEFAULT,
+-        .dns_over_tls                  = NM_SETTING_CONNECTION_DNS_OVER_TLS_DEFAULT,
+-        .flags                         = NM_L3_CONFIG_DAT_FLAGS_NONE,
+-        .metered                       = NM_TERNARY_DEFAULT,
+-        .proxy_browser_only            = NM_TERNARY_DEFAULT,
+-        .proxy_method                  = NM_PROXY_CONFIG_METHOD_UNKNOWN,
+-        .route_table_sync_4            = NM_IP_ROUTE_TABLE_SYNC_MODE_NONE,
+-        .route_table_sync_6            = NM_IP_ROUTE_TABLE_SYNC_MODE_NONE,
+-        .never_default_6               = NM_OPTION_BOOL_DEFAULT,
+-        .never_default_4               = NM_OPTION_BOOL_DEFAULT,
+-        .source                        = source,
+-        .ip6_privacy                   = NM_SETTING_IP6_CONFIG_PRIVACY_UNKNOWN,
+-        .mptcp_flags                   = NM_MPTCP_FLAGS_NONE,
+-        .ndisc_hop_limit_set           = FALSE,
+-        .ndisc_reachable_time_msec_set = FALSE,
+-        .ndisc_retrans_timer_msec_set  = FALSE,
++        .ref_count                      = 1,
++        .ifindex                        = ifindex,
++        .multi_idx                      = nm_dedup_multi_index_ref(multi_idx),
++        .mdns                           = NM_SETTING_CONNECTION_MDNS_DEFAULT,
++        .llmnr                          = NM_SETTING_CONNECTION_LLMNR_DEFAULT,
++        .dns_over_tls                   = NM_SETTING_CONNECTION_DNS_OVER_TLS_DEFAULT,
++        .flags                          = NM_L3_CONFIG_DAT_FLAGS_NONE,
++        .metered                        = NM_TERNARY_DEFAULT,
++        .proxy_browser_only             = NM_TERNARY_DEFAULT,
++        .proxy_method                   = NM_PROXY_CONFIG_METHOD_UNKNOWN,
++        .route_table_sync_4             = NM_IP_ROUTE_TABLE_SYNC_MODE_NONE,
++        .route_table_sync_6             = NM_IP_ROUTE_TABLE_SYNC_MODE_NONE,
++        .never_default_6                = NM_OPTION_BOOL_DEFAULT,
++        .never_default_4                = NM_OPTION_BOOL_DEFAULT,
++        .source                         = source,
++        .ip6_privacy                    = NM_SETTING_IP6_CONFIG_PRIVACY_UNKNOWN,
++        .mptcp_flags                    = NM_MPTCP_FLAGS_NONE,
++        .ndisc_hop_limit_set            = FALSE,
++        .ndisc_reachable_time_msec_set  = FALSE,
++        .ndisc_retrans_timer_msec_set   = FALSE,
++        .allow_routes_without_address_4 = TRUE,
++        .allow_routes_without_address_6 = TRUE,
+     };
+ 
+     _idx_type_init(&self->idx_addresses_4, NMP_OBJECT_TYPE_IP4_ADDRESS);
+@@ -1936,15 +1938,15 @@ nm_l3_config_data_set_mptcp_flags(NML3ConfigData *self, NMMptcpFlags mptcp_flags
+ }
+ 
+ gboolean
+-nm_l3_config_data_get_dhcp_enabled(const NML3ConfigData *self, int addr_family)
++nm_l3_config_data_get_allow_routes_without_address(const NML3ConfigData *self, int addr_family)
+ {
+     const int IS_IPv4 = NM_IS_IPv4(addr_family);
+ 
+     nm_assert(_NM_IS_L3_CONFIG_DATA(self, TRUE));
+     if (IS_IPv4) {
+-        return self->dhcp_enabled_4;
++        return self->allow_routes_without_address_4;
+     } else {
+-        return self->dhcp_enabled_6;
++        return self->allow_routes_without_address_6;
+     }
+ }
+ 
+@@ -2758,18 +2760,18 @@ _init_from_connection_ip(NML3ConfigData *self, int addr_family, NMConnection *co
+     method = nm_setting_ip_config_get_method(s_ip);
+     if (IS_IPv4) {
+         if (nm_streq(method, NM_SETTING_IP4_CONFIG_METHOD_AUTO)) {
+-            self->dhcp_enabled_4 = TRUE;
++            self->allow_routes_without_address_4 = FALSE;
+         } else {
+-            self->dhcp_enabled_4 = FALSE;
++            self->allow_routes_without_address_4 = TRUE;
+         }
+     } else {
+         method = nm_setting_ip_config_get_method(s_ip);
+         if (NM_IN_STRSET(method,
+                          NM_SETTING_IP6_CONFIG_METHOD_AUTO,
+                          NM_SETTING_IP6_CONFIG_METHOD_DHCP)) {
+-            self->dhcp_enabled_6 = TRUE;
++            self->allow_routes_without_address_6 = FALSE;
+         } else {
+-            self->dhcp_enabled_6 = FALSE;
++            self->allow_routes_without_address_6 = TRUE;
+         }
+     }
+ 
+@@ -3456,11 +3458,11 @@ nm_l3_config_data_merge(NML3ConfigData       *self,
+         self->dhcp_lease_x[0] = nm_dhcp_lease_ref(self->dhcp_lease_x[0]);
+         self->dhcp_lease_x[1] = nm_dhcp_lease_ref(self->dhcp_lease_x[1]);
+     }
+-    if (src->dhcp_enabled_4)
+-        self->dhcp_enabled_4 = TRUE;
++    if (!src->allow_routes_without_address_4)
++        self->allow_routes_without_address_4 = FALSE;
+ 
+-    if (src->dhcp_enabled_6)
+-        self->dhcp_enabled_6 = TRUE;
++    if (!src->allow_routes_without_address_6)
++        self->allow_routes_without_address_6 = FALSE;
+ }
+ 
+ NML3ConfigData *
+diff --git a/src/core/nm-l3-config-data.h b/src/core/nm-l3-config-data.h
+index b55b2f4194..5c8491a704 100644
+--- a/src/core/nm-l3-config-data.h
++++ b/src/core/nm-l3-config-data.h
+@@ -554,7 +554,8 @@ NMSettingIP6ConfigPrivacy nm_l3_config_data_get_ip6_privacy(const NML3ConfigData
+ gboolean nm_l3_config_data_set_ip6_privacy(NML3ConfigData           *self,
+                                            NMSettingIP6ConfigPrivacy ip6_privacy);
+ 
+-gboolean nm_l3_config_data_get_dhcp_enabled(const NML3ConfigData *self, int addr_family);
++gboolean nm_l3_config_data_get_allow_routes_without_address(const NML3ConfigData *self,
++                                                            int                   addr_family);
+ 
+ NMProxyConfigMethod nm_l3_config_data_get_proxy_method(const NML3ConfigData *self);
+ 
+diff --git a/src/core/nm-l3cfg.c b/src/core/nm-l3cfg.c
+index f428d04cc6..ab9844d642 100644
+--- a/src/core/nm-l3cfg.c
++++ b/src/core/nm-l3cfg.c
+@@ -1301,7 +1301,6 @@ _commit_collect_routes(NML3Cfg          *self,
+     const int                    IS_IPv4 = NM_IS_IPv4(addr_family);
+     const NMDedupMultiHeadEntry *head_entry;
+     const NMDedupMultiEntry     *entry;
+-    gboolean                     is_dhcp_enabled;
+ 
+     nm_assert(routes && !*routes);
+     nm_assert(routes_nodev && !*routes_nodev);
+@@ -1321,10 +1320,10 @@ _commit_collect_routes(NML3Cfg          *self,
+         else {
+             nm_assert(NMP_OBJECT_CAST_IP_ROUTE(obj)->ifindex == self->priv.ifindex);
+ 
+-            is_dhcp_enabled =
+-                nm_l3_config_data_get_dhcp_enabled(self->priv.p->combined_l3cd_commited,
+-                                                   addr_family);
+-            if (!any_addrs && is_dhcp_enabled) {
++            if (!any_addrs
++                && !nm_l3_config_data_get_allow_routes_without_address(
++                    self->priv.p->combined_l3cd_commited,
++                    addr_family)) {
+                 /* This is a unicast route (or a similar route, which has an
+                  * ifindex).
+                  *
+-- 
+2.45.2
+
+
+From 66f8dfc453eda98a77c9a85c2b6110955f02b5c7 Mon Sep 17 00:00:00 2001
+From: Beniamino Galvani <bgalvani@redhat.com>
+Date: Wed, 8 May 2024 11:02:20 +0200
+Subject: [PATCH 3/4] core: add
+ nm_l3_config_data_set_allow_routes_without_address()
+
+Add a function to set the allow-routes-without-address flag for
+l3cds. It will be used in the next commit.
+
+(cherry picked from commit a3ce13c947e6eda71fa07de273ede55b806e8d45)
+(cherry picked from commit 5fa063f90d443044ca1dba71478c701ce7b62b94)
+(cherry picked from commit e008ec734553f7b065714025e6f3628cac10f314)
+---
+ src/core/nm-l3-config-data.c | 15 +++++++++++++++
+ src/core/nm-l3-config-data.h |  4 ++++
+ 2 files changed, 19 insertions(+)
+
+diff --git a/src/core/nm-l3-config-data.c b/src/core/nm-l3-config-data.c
+index fbee1bf7e8..908c4d65d5 100644
+--- a/src/core/nm-l3-config-data.c
++++ b/src/core/nm-l3-config-data.c
+@@ -1950,6 +1950,21 @@ nm_l3_config_data_get_allow_routes_without_address(const NML3ConfigData *self, i
+     }
+ }
+ 
++void
++nm_l3_config_data_set_allow_routes_without_address(NML3ConfigData *self,
++                                                   int             addr_family,
++                                                   gboolean        value)
++{
++    const int IS_IPv4 = NM_IS_IPv4(addr_family);
++
++    nm_assert(_NM_IS_L3_CONFIG_DATA(self, FALSE));
++    if (IS_IPv4) {
++        self->allow_routes_without_address_4 = value;
++    } else {
++        self->allow_routes_without_address_6 = value;
++    }
++}
++
+ NMProxyConfigMethod
+ nm_l3_config_data_get_proxy_method(const NML3ConfigData *self)
+ {
+diff --git a/src/core/nm-l3-config-data.h b/src/core/nm-l3-config-data.h
+index 5c8491a704..faf4f0bfa9 100644
+--- a/src/core/nm-l3-config-data.h
++++ b/src/core/nm-l3-config-data.h
+@@ -557,6 +557,10 @@ gboolean nm_l3_config_data_set_ip6_privacy(NML3ConfigData           *self,
+ gboolean nm_l3_config_data_get_allow_routes_without_address(const NML3ConfigData *self,
+                                                             int                   addr_family);
+ 
++void nm_l3_config_data_set_allow_routes_without_address(NML3ConfigData *self,
++                                                        int             addr_family,
++                                                        gboolean        value);
++
+ NMProxyConfigMethod nm_l3_config_data_get_proxy_method(const NML3ConfigData *self);
+ 
+ gboolean nm_l3_config_data_set_proxy_method(NML3ConfigData *self, NMProxyConfigMethod value);
+-- 
+2.45.2
+
+
+From 1d041a7ada56c27dcd155ff67a1bf02f0b00e35e Mon Sep 17 00:00:00 2001
+From: Beniamino Galvani <bgalvani@redhat.com>
+Date: Wed, 8 May 2024 11:04:04 +0200
+Subject: [PATCH 4/4] vpn: allow IP configurations with routes and without
+ addresses
+
+Usually, when the method is "auto" we want to avoid configuring routes
+until the automatic method completes. To achieve that, we clear the
+"allow_routes_without_address" flag of l3cds when the method is "auto".
+
+For VPNs, IP configurations with only routes are perfectly valid,
+therefore set the flag.
+
+(cherry picked from commit d1ffdb28ebaf3af23ac76b59c35fe7e4672cb5bc)
+(cherry picked from commit 5b4ed809cc458504f01a02e908a91f2625613787)
+(cherry picked from commit 83847cc621aaa5ee6130e4088582875fcd98dd64)
+---
+ src/core/vpn/nm-vpn-connection.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/src/core/vpn/nm-vpn-connection.c b/src/core/vpn/nm-vpn-connection.c
+index 62aecbd286..f26f4c42e0 100644
+--- a/src/core/vpn/nm-vpn-connection.c
++++ b/src/core/vpn/nm-vpn-connection.c
+@@ -1433,6 +1433,10 @@ _check_complete(NMVpnConnection *self, gboolean success)
+     l3cd = nm_l3_config_data_new_from_connection(nm_netns_get_multi_idx(priv->netns),
+                                                  nm_vpn_connection_get_ip_ifindex(self, TRUE),
+                                                  connection);
++
++    nm_l3_config_data_set_allow_routes_without_address(l3cd, AF_INET, TRUE);
++    nm_l3_config_data_set_allow_routes_without_address(l3cd, AF_INET6, TRUE);
++
+     _l3cfg_l3cd_set(self, L3CD_TYPE_STATIC, l3cd);
+ 
+     _l3cfg_l3cd_gw_extern_update(self);
+-- 
+2.45.2
+

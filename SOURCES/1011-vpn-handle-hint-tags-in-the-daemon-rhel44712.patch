@@ -1,0 +1,241 @@
+From 4a31371e834057712c33678b249127062b250a33 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=8D=C3=B1igo=20Huguet?= <ihuguet@redhat.com>
+Date: Mon, 3 Jun 2024 14:29:15 +0200
+Subject: [PATCH 1/2] vpn: handle hint tags in the daemon
+
+Commit 345bd1b18731 ('libnmc: fix secrets request on 2nd stage of 2FA
+authentication') and commit 27c701ebfbc9 ('libnmc: allow user input in
+ECHO mode for 2FA challenges') introduced 2 new tags that hints for the
+secret agents can have as prefix.
+
+These tags were processed (and removed) in the secret agents, not in the
+daemon. This is wrong because a system with an updated VPN plugin but a
+not yet updated secret agent (like nm-plasma) will fail: it won't remove
+the prefix and the daemon will save the secret with the prefix, i.e.
+"x-dynamic-challenge:challenge-response" instead of just
+"challenge-response". Then, VPN plugins doesn't recognize it, failing the
+profile's activation. This is, in fact, an API break.
+
+Also, if the VPN connection already existed before updating NM and the
+VPN plugin, the secret flags are not added to the profile (they are only
+added when the profile is created or modified). This causes the user's
+first time response is saved to the profile, so the activation fails the
+second and next times.
+
+See:
+- https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/issues/1536
+- https://gitlab.gnome.org/GNOME/NetworkManager-openvpn/-/issues/142
+
+Anyway, in a good design the daemon should contain almost all the logic
+and the clients should keep as simple as possible. Fix above's problems
+by letting the daemon to receive the secret names with the prefix
+already included. The daemon will strip it and will know what it means.
+
+Note that this is done only in the functions that saves the secrets from
+the data received via D-Bus. For example, nm_setting_vpn_add_secret
+doesn't need to do it because this value shouldn't come from VPN
+plugin's hints.
+
+(cherry picked from commit 0583e1f8436e4c8a4e462a643c711b69d157b938)
+(cherry picked from commit 574741783c34fc62e8df78544b619d8281ddc85d)
+(cherry picked from commit bdbcda1e22c2eba9a51fb476b79fb680a99be84f)
+---
+ src/libnm-core-impl/nm-setting-vpn.c | 55 ++++++++++++++++++++++++++--
+ 1 file changed, 52 insertions(+), 3 deletions(-)
+
+diff --git a/src/libnm-core-impl/nm-setting-vpn.c b/src/libnm-core-impl/nm-setting-vpn.c
+index b867d01860..65a14866c8 100644
+--- a/src/libnm-core-impl/nm-setting-vpn.c
++++ b/src/libnm-core-impl/nm-setting-vpn.c
+@@ -577,14 +577,48 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
+     return TRUE;
+ }
+ 
++static gboolean
++_parse_secret_hint_tag(const char           *secret_name,
++                       const char          **out_secret_name,
++                       NMSettingSecretFlags *out_implied_flags)
++{
++    NMSettingSecretFlags implied_flags = NM_SETTING_SECRET_FLAG_NONE;
++    gboolean             ret           = FALSE;
++
++    nm_assert(secret_name);
++
++    if (g_str_has_prefix(secret_name, NM_SECRET_TAG_DYNAMIC_CHALLENGE)) {
++        secret_name += NM_STRLEN(NM_SECRET_TAG_DYNAMIC_CHALLENGE);
++        implied_flags |= NM_SETTING_SECRET_FLAG_NOT_SAVED;
++        ret = TRUE;
++    } else if (g_str_has_prefix(secret_name, NM_SECRET_TAG_DYNAMIC_CHALLENGE_ECHO)) {
++        secret_name += NM_STRLEN(NM_SECRET_TAG_DYNAMIC_CHALLENGE_ECHO);
++        implied_flags |= NM_SETTING_SECRET_FLAG_NOT_SAVED;
++        ret = TRUE;
++    }
++
++    NM_SET_OUT(out_secret_name, secret_name);
++    NM_SET_OUT(out_implied_flags, implied_flags);
++    return ret;
++}
++
+ static NMSettingUpdateSecretResult
+ update_secret_string(NMSetting *setting, const char *key, const char *value, GError **error)
+ {
+     NMSettingVpnPrivate *priv = NM_SETTING_VPN_GET_PRIVATE(setting);
++    NMSettingSecretFlags hint_implied_flags, flags;
+ 
+     g_return_val_if_fail(key && key[0], NM_SETTING_UPDATE_SECRET_ERROR);
+     g_return_val_if_fail(value, NM_SETTING_UPDATE_SECRET_ERROR);
+ 
++    /* If the name is prefixed with a hint tag, process it before saving:
++     * remove the prefix and apply the flags that it implies */
++    _parse_secret_hint_tag(key, &key, &hint_implied_flags);
++    if (hint_implied_flags) {
++        nm_setting_get_secret_flags(setting, key, &flags, NULL);
++        nm_setting_set_secret_flags(setting, key, flags | hint_implied_flags, NULL);
++    }
++
+     if (nm_streq0(nm_g_hash_table_lookup(priv->secrets, key), value))
+         return NM_SETTING_UPDATE_SECRET_SUCCESS_UNCHANGED;
+ 
+@@ -599,6 +633,7 @@ update_secret_dict(NMSetting *setting, GVariant *secrets, GError **error)
+     GVariantIter                iter;
+     const char                 *name, *value;
+     NMSettingUpdateSecretResult result = NM_SETTING_UPDATE_SECRET_SUCCESS_UNCHANGED;
++    NMSettingSecretFlags        hint_implied_flags, flags;
+ 
+     g_return_val_if_fail(secrets != NULL, NM_SETTING_UPDATE_SECRET_ERROR);
+ 
+@@ -618,6 +653,14 @@ update_secret_dict(NMSetting *setting, GVariant *secrets, GError **error)
+     /* Now add the items to the settings' secrets list */
+     g_variant_iter_init(&iter, secrets);
+     while (g_variant_iter_next(&iter, "{&s&s}", &name, &value)) {
++        /* If the name is prefixed with a hint tag, process it before saving:
++         * remove the prefix and apply the flags that it implies */
++        _parse_secret_hint_tag(name, &name, &hint_implied_flags);
++        if (hint_implied_flags) {
++            nm_setting_get_secret_flags(setting, name, &flags, NULL);
++            nm_setting_set_secret_flags(setting, name, flags | hint_implied_flags, NULL);
++        }
++
+         if (nm_streq0(nm_g_hash_table_lookup(priv->secrets, name), value))
+             continue;
+ 
+@@ -727,6 +770,7 @@ get_secret_flags(NMSetting            *setting,
+                  GError              **error)
+ {
+     NMSettingVpnPrivate *priv           = NM_SETTING_VPN_GET_PRIVATE(setting);
++    NMSettingSecretFlags implied_flags  = NM_SETTING_SECRET_FLAG_NONE;
+     gs_free char        *flags_key_free = NULL;
+     const char          *flags_key;
+     const char          *flags_val;
+@@ -734,6 +778,10 @@ get_secret_flags(NMSetting            *setting,
+ 
+     nm_assert(secret_name);
+ 
++    /* Secrets received via D-Bus from VPN plugins might be prefixed by a hint tag. If
++     * that's the case, process it first: remove the tag and get the flags that it implies */
++    _parse_secret_hint_tag(secret_name, &secret_name, &implied_flags);
++
+     if (!secret_name[0]) {
+         g_set_error(error,
+                     NM_CONNECTION_ERROR,
+@@ -746,7 +794,7 @@ get_secret_flags(NMSetting            *setting,
+ 
+     if (!priv->data
+         || !g_hash_table_lookup_extended(priv->data, flags_key, NULL, (gpointer *) &flags_val)) {
+-        NM_SET_OUT(out_flags, NM_SETTING_SECRET_FLAG_NONE);
++        NM_SET_OUT(out_flags, implied_flags);
+ 
+         /* having no secret flag for the secret is fine, as long as there
+          * is the secret itself... */
+@@ -772,7 +820,7 @@ get_secret_flags(NMSetting            *setting,
+         return TRUE;
+     }
+ 
+-    NM_SET_OUT(out_flags, (NMSettingSecretFlags) i64);
++    NM_SET_OUT(out_flags, (NMSettingSecretFlags) i64 | implied_flags);
+     return TRUE;
+ }
+ 
+@@ -783,7 +831,8 @@ set_secret_flags(NMSetting           *setting,
+                  GError             **error)
+ {
+     nm_assert(secret_name);
+-
++    nm_assert(!_parse_secret_hint_tag(secret_name, NULL, NULL)); /* Accept hint tags only via D-Bus,
++                                                                    saved by update_one_secret */
+     if (!secret_name[0]) {
+         g_set_error(error,
+                     NM_CONNECTION_ERROR,
+-- 
+2.44.0
+
+
+From ef781d957db80d1e628098dab2cbb1da70558511 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=8D=C3=B1igo=20Huguet?= <ihuguet@redhat.com>
+Date: Wed, 29 May 2024 16:50:10 +0200
+Subject: [PATCH 2/2] libnmc: don't strip prefix tags from secret names
+
+The daemon is now capable of understanding and removing these prefix
+tags by itself. It is better than this is not a responsibility of the
+secret agent because it requires changes in all secret agents to work
+properly (see https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/issues/1536).
+
+If the secret agent knows what these prefix tags are, it can remove them
+only in the text that is displayed in the UI, but maintaining the
+original string as the secret name that is returned to the daemon.
+
+Secret agents that doesn't know what these prefix tags are won't do
+anything with them, and they will also return the same string as secret
+name, as expected. The only drawback is that they might display the full
+string to the user, which is not a nice UX but it will at least work.
+
+Also, allow to translate the secret name for the UI in libnmc.
+
+(cherry picked from commit 18240bb72d191c987afe150d3a5023fe79d994dd)
+(cherry picked from commit e217ec040d04835450c2de92cd2cf408e22f3fcd)
+(cherry picked from commit a8a59e3e0af2f0922c1e6f0e18f00fe195c2d026)
+---
+ src/libnmc-base/nm-secret-agent-simple.c | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/src/libnmc-base/nm-secret-agent-simple.c b/src/libnmc-base/nm-secret-agent-simple.c
+index 4bb77c9802..9d1a2ae962 100644
+--- a/src/libnmc-base/nm-secret-agent-simple.c
++++ b/src/libnmc-base/nm-secret-agent-simple.c
+@@ -431,7 +431,7 @@ add_vpn_secrets(RequestData *request, GPtrArray *secrets, char **msg)
+     const NmcVpnPasswordName *p;
+     const char               *vpn_msg = NULL;
+     char                    **iter;
+-    char                     *secret_name;
++    char                     *ui_name;
+     bool                      is_challenge = FALSE;
+     bool                      force_echo;
+ 
+@@ -442,19 +442,19 @@ add_vpn_secrets(RequestData *request, GPtrArray *secrets, char **msg)
+                 vpn_msg = &(*iter)[NM_STRLEN(NM_SECRET_TAG_VPN_MSG)];
+             } else {
+                 if (NM_STR_HAS_PREFIX(*iter, NM_SECRET_TAG_DYNAMIC_CHALLENGE)) {
+-                    secret_name  = &(*iter)[NM_STRLEN(NM_SECRET_TAG_DYNAMIC_CHALLENGE)];
++                    ui_name      = &(*iter)[NM_STRLEN(NM_SECRET_TAG_DYNAMIC_CHALLENGE)];
+                     is_challenge = TRUE;
+                     force_echo   = FALSE;
+                 } else if (NM_STR_HAS_PREFIX(*iter, NM_SECRET_TAG_DYNAMIC_CHALLENGE_ECHO)) {
+-                    secret_name  = &(*iter)[NM_STRLEN(NM_SECRET_TAG_DYNAMIC_CHALLENGE_ECHO)];
++                    ui_name      = &(*iter)[NM_STRLEN(NM_SECRET_TAG_DYNAMIC_CHALLENGE_ECHO)];
+                     is_challenge = TRUE;
+                     force_echo   = TRUE;
+                 } else {
+-                    secret_name = *iter;
+-                    force_echo  = FALSE;
++                    ui_name    = *iter;
++                    force_echo = FALSE;
+                 }
+ 
+-                add_vpn_secret_helper(secrets, s_vpn, secret_name, secret_name, force_echo);
++                add_vpn_secret_helper(secrets, s_vpn, *iter, ui_name, force_echo);
+             }
+         }
+     }
+-- 
+2.44.0
+
