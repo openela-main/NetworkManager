@@ -1,0 +1,338 @@
+From 0c55f0128ad17764fbe0862819fe43f32abfb27c Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Fri, 31 May 2024 10:34:28 +0200
+Subject: [PATCH 1/2] lldp: fix crash dereferencing NULL pointer during debug
+ logging
+
+During nm_lldp_neighbor_parse(), the NMLldpNeighbor is not yet added to
+the NMLldpRX instance. Consequently, n->lldp_rx is NULL.
+
+Note how we use lldp_x for logging, because we need it for the context
+for which interface the logging statement is.
+
+Thus, those debug logging statements will follow a NULL pointer and lead
+to a crash.
+
+Fixes: 630de288d2e4 ('lldp: add libnm-lldp as fork of systemd's sd_lldp_rx')
+
+https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/issues/1550
+(cherry picked from commit c2cddd3241349c0d5612d7603261c182fbc6d7c3)
+(cherry picked from commit 8a2f7bd6e0572cc524e6bd6e4c2893e03f98a6f0)
+(cherry picked from commit 6da9b98975ed790a9c00f57bd97e56c77ecb7673)
+---
+ src/core/devices/nm-lldp-listener.c | 15 ++++++++-
+ src/libnm-lldp/nm-lldp-neighbor.c   | 47 +++++++++++++++--------------
+ src/libnm-lldp/nm-lldp-neighbor.h   |  4 ++-
+ src/libnm-lldp/nm-lldp-rx.c         |  2 +-
+ src/libnm-lldp/nm-lldp-rx.h         |  2 +-
+ 5 files changed, 44 insertions(+), 26 deletions(-)
+
+diff --git a/src/core/devices/nm-lldp-listener.c b/src/core/devices/nm-lldp-listener.c
+index ac7e97f0c2..59c8f54c01 100644
+--- a/src/core/devices/nm-lldp-listener.c
++++ b/src/core/devices/nm-lldp-listener.c
+@@ -704,9 +704,16 @@ lldp_neighbor_to_variant(LldpNeighbor *neigh)
+ 
+ /*****************************************************************************/
+ 
++static void
++nmtst_lldp_event_handler(NMLldpRX *lldp, NMLldpRXEvent event, NMLldpNeighbor *n, void *user_data)
++{
++    g_assert_not_reached();
++}
++
+ GVariant *
+ nmtst_lldp_parse_from_raw(const guint8 *raw_data, gsize raw_len)
+ {
++    nm_auto(nm_lldp_rx_unrefp) NMLldpRX             *lldp_rx     = NULL;
+     nm_auto(nm_lldp_neighbor_unrefp) NMLldpNeighbor *neighbor_nm = NULL;
+     nm_auto(lldp_neighbor_freep) LldpNeighbor       *neigh       = NULL;
+     GVariant                                        *variant;
+@@ -714,7 +721,13 @@ nmtst_lldp_parse_from_raw(const guint8 *raw_data, gsize raw_len)
+     g_assert(raw_data);
+     g_assert(raw_len > 0);
+ 
+-    neighbor_nm = nm_lldp_neighbor_new_from_raw(raw_data, raw_len);
++    lldp_rx = nm_lldp_rx_new(&((NMLldpRXConfig){
++        .ifindex       = 1,
++        .neighbors_max = MAX_NEIGHBORS,
++        .callback      = nmtst_lldp_event_handler,
++    }));
++
++    neighbor_nm = nm_lldp_neighbor_new_from_raw(lldp_rx, raw_data, raw_len);
+     g_assert(neighbor_nm);
+ 
+     neigh = lldp_neighbor_new(neighbor_nm);
+diff --git a/src/libnm-lldp/nm-lldp-neighbor.c b/src/libnm-lldp/nm-lldp-neighbor.c
+index a2a9695e85..0880c02d98 100644
+--- a/src/libnm-lldp/nm-lldp-neighbor.c
++++ b/src/libnm-lldp/nm-lldp-neighbor.c
+@@ -65,6 +65,7 @@ parse_string(NMLldpRX *lldp_rx, char **s, const void *q, size_t n)
+     const char *p = q;
+     char       *k;
+ 
++    nm_assert(lldp_rx);
+     nm_assert(s);
+     nm_assert(p || n == 0);
+ 
+@@ -99,31 +100,33 @@ parse_string(NMLldpRX *lldp_rx, char **s, const void *q, size_t n)
+ }
+ 
+ int
+-nm_lldp_neighbor_parse(NMLldpNeighbor *n)
++nm_lldp_neighbor_parse(NMLldpRX *lldp_rx, NMLldpNeighbor *n)
+ {
+     struct ether_header h;
+     const uint8_t      *p;
+     size_t              left;
+     int                 r;
+ 
++    nm_assert(lldp_rx);
+     nm_assert(n);
++    nm_assert(!n->lldp_rx);
+ 
+     if (n->raw_size < sizeof(struct ether_header)) {
+-        _LOG2D(n->lldp_rx, "Received truncated packet, ignoring.");
++        _LOG2D(lldp_rx, "Received truncated packet, ignoring.");
+         return -NME_UNSPEC;
+     }
+ 
+     memcpy(&h, NM_LLDP_NEIGHBOR_RAW(n), sizeof(h));
+ 
+     if (h.ether_type != htobe16(NM_ETHERTYPE_LLDP)) {
+-        _LOG2D(n->lldp_rx, "Received packet with wrong type, ignoring.");
++        _LOG2D(lldp_rx, "Received packet with wrong type, ignoring.");
+         return -NME_UNSPEC;
+     }
+ 
+     if (h.ether_dhost[0] != 0x01 || h.ether_dhost[1] != 0x80 || h.ether_dhost[2] != 0xc2
+         || h.ether_dhost[3] != 0x00 || h.ether_dhost[4] != 0x00
+         || !NM_IN_SET(h.ether_dhost[5], 0x00, 0x03, 0x0e)) {
+-        _LOG2D(n->lldp_rx, "Received packet with wrong destination address, ignoring.");
++        _LOG2D(lldp_rx, "Received packet with wrong destination address, ignoring.");
+         return -NME_UNSPEC;
+     }
+ 
+@@ -138,7 +141,7 @@ nm_lldp_neighbor_parse(NMLldpNeighbor *n)
+         uint16_t length;
+ 
+         if (left < 2) {
+-            _LOG2D(n->lldp_rx, "TLV lacks header, ignoring.");
++            _LOG2D(lldp_rx, "TLV lacks header, ignoring.");
+             return -NME_UNSPEC;
+         }
+ 
+@@ -147,14 +150,14 @@ nm_lldp_neighbor_parse(NMLldpNeighbor *n)
+         p += 2, left -= 2;
+ 
+         if (left < length) {
+-            _LOG2D(n->lldp_rx, "TLV truncated, ignoring datagram.");
++            _LOG2D(lldp_rx, "TLV truncated, ignoring datagram.");
+             return -NME_UNSPEC;
+         }
+ 
+         switch (type) {
+         case NM_LLDP_TYPE_END:
+             if (length != 0) {
+-                _LOG2D(n->lldp_rx, "End marker TLV not zero-sized, ignoring datagram.");
++                _LOG2D(lldp_rx, "End marker TLV not zero-sized, ignoring datagram.");
+                 return -NME_UNSPEC;
+             }
+ 
+@@ -166,12 +169,12 @@ nm_lldp_neighbor_parse(NMLldpNeighbor *n)
+         case NM_LLDP_TYPE_CHASSIS_ID:
+             if (length < 2 || length > 256) {
+                 /* includes the chassis subtype, hence one extra byte */
+-                _LOG2D(n->lldp_rx, "Chassis ID field size out of range, ignoring datagram.");
++                _LOG2D(lldp_rx, "Chassis ID field size out of range, ignoring datagram.");
+                 return -NME_UNSPEC;
+             }
+ 
+             if (n->id.chassis_id) {
+-                _LOG2D(n->lldp_rx, "Duplicate chassis ID field, ignoring datagram.");
++                _LOG2D(lldp_rx, "Duplicate chassis ID field, ignoring datagram.");
+                 return -NME_UNSPEC;
+             }
+ 
+@@ -182,12 +185,12 @@ nm_lldp_neighbor_parse(NMLldpNeighbor *n)
+         case NM_LLDP_TYPE_PORT_ID:
+             if (length < 2 || length > 256) {
+                 /* includes the port subtype, hence one extra byte */
+-                _LOG2D(n->lldp_rx, "Port ID field size out of range, ignoring datagram.");
++                _LOG2D(lldp_rx, "Port ID field size out of range, ignoring datagram.");
+                 return -NME_UNSPEC;
+             }
+ 
+             if (n->id.port_id) {
+-                _LOG2D(n->lldp_rx, "Duplicate port ID field, ignoring datagram.");
++                _LOG2D(lldp_rx, "Duplicate port ID field, ignoring datagram.");
+                 return -NME_UNSPEC;
+             }
+ 
+@@ -197,12 +200,12 @@ nm_lldp_neighbor_parse(NMLldpNeighbor *n)
+ 
+         case NM_LLDP_TYPE_TTL:
+             if (length != 2) {
+-                _LOG2D(n->lldp_rx, "TTL field has wrong size, ignoring datagram.");
++                _LOG2D(lldp_rx, "TTL field has wrong size, ignoring datagram.");
+                 return -NME_UNSPEC;
+             }
+ 
+             if (n->has_ttl) {
+-                _LOG2D(n->lldp_rx, "Duplicate TTL field, ignoring datagram.");
++                _LOG2D(lldp_rx, "Duplicate TTL field, ignoring datagram.");
+                 return -NME_UNSPEC;
+             }
+ 
+@@ -211,26 +214,26 @@ nm_lldp_neighbor_parse(NMLldpNeighbor *n)
+             break;
+ 
+         case NM_LLDP_TYPE_PORT_DESCRIPTION:
+-            r = parse_string(n->lldp_rx, &n->port_description, p, length);
++            r = parse_string(lldp_rx, &n->port_description, p, length);
+             if (r < 0)
+                 return r;
+             break;
+ 
+         case NM_LLDP_TYPE_SYSTEM_NAME:
+-            r = parse_string(n->lldp_rx, &n->system_name, p, length);
++            r = parse_string(lldp_rx, &n->system_name, p, length);
+             if (r < 0)
+                 return r;
+             break;
+ 
+         case NM_LLDP_TYPE_SYSTEM_DESCRIPTION:
+-            r = parse_string(n->lldp_rx, &n->system_description, p, length);
++            r = parse_string(lldp_rx, &n->system_description, p, length);
+             if (r < 0)
+                 return r;
+             break;
+ 
+         case NM_LLDP_TYPE_SYSTEM_CAPABILITIES:
+             if (length != 4) {
+-                _LOG2D(n->lldp_rx, "System capabilities field has wrong size.");
++                _LOG2D(lldp_rx, "System capabilities field has wrong size.");
+                 return -NME_UNSPEC;
+             }
+ 
+@@ -241,13 +244,13 @@ nm_lldp_neighbor_parse(NMLldpNeighbor *n)
+ 
+         case NM_LLDP_TYPE_PRIVATE:
+             if (length < 4) {
+-                _LOG2D(n->lldp_rx, "Found private TLV that is too short, ignoring.");
++                _LOG2D(lldp_rx, "Found private TLV that is too short, ignoring.");
+                 return -NME_UNSPEC;
+             }
+ 
+             /* RFC 8520: MUD URL */
+             if (memcmp(p, NM_LLDP_OUI_IANA_MUD, sizeof(NM_LLDP_OUI_IANA_MUD)) == 0) {
+-                r = parse_string(n->lldp_rx,
++                r = parse_string(lldp_rx,
+                                  &n->mud_url,
+                                  p + sizeof(NM_LLDP_OUI_IANA_MUD),
+                                  length - sizeof(NM_LLDP_OUI_IANA_MUD));
+@@ -262,7 +265,7 @@ nm_lldp_neighbor_parse(NMLldpNeighbor *n)
+ 
+ end_marker:
+     if (!n->id.chassis_id || !n->id.port_id || !n->has_ttl) {
+-        _LOG2D(n->lldp_rx, "One or more mandatory TLV missing in datagram. Ignoring.");
++        _LOG2D(lldp_rx, "One or more mandatory TLV missing in datagram. Ignoring.");
+         return -NME_UNSPEC;
+     }
+ 
+@@ -740,7 +743,7 @@ nm_lldp_neighbor_new(size_t raw_size)
+ }
+ 
+ NMLldpNeighbor *
+-nm_lldp_neighbor_new_from_raw(const void *raw, size_t raw_size)
++nm_lldp_neighbor_new_from_raw(NMLldpRX *lldp_rx, const void *raw, size_t raw_size)
+ {
+     nm_auto(nm_lldp_neighbor_unrefp) NMLldpNeighbor *n = NULL;
+     int                                              r;
+@@ -751,7 +754,7 @@ nm_lldp_neighbor_new_from_raw(const void *raw, size_t raw_size)
+ 
+     nm_memcpy(NM_LLDP_NEIGHBOR_RAW(n), raw, raw_size);
+ 
+-    r = nm_lldp_neighbor_parse(n);
++    r = nm_lldp_neighbor_parse(lldp_rx, n);
+     if (r < 0)
+         return NULL;
+ 
+diff --git a/src/libnm-lldp/nm-lldp-neighbor.h b/src/libnm-lldp/nm-lldp-neighbor.h
+index 1adc967e7e..038591a066 100644
+--- a/src/libnm-lldp/nm-lldp-neighbor.h
++++ b/src/libnm-lldp/nm-lldp-neighbor.h
+@@ -75,11 +75,13 @@ NM_LLDP_NEIGHBOR_TLV_DATA(const NMLldpNeighbor *n)
+     return ((uint8_t *) NM_LLDP_NEIGHBOR_RAW(n)) + n->rindex + 2;
+ }
+ 
++struct _NMLldpRX;
++
+ int nm_lldp_neighbor_prioq_compare_func(const void *a, const void *b);
+ 
+ void            nm_lldp_neighbor_unlink(NMLldpNeighbor *n);
+ NMLldpNeighbor *nm_lldp_neighbor_new(size_t raw_size);
+-int             nm_lldp_neighbor_parse(NMLldpNeighbor *n);
++int             nm_lldp_neighbor_parse(struct _NMLldpRX *lldp_rx, NMLldpNeighbor *n);
+ void            nm_lldp_neighbor_start_ttl(NMLldpNeighbor *n);
+ 
+ #endif /* __NM_LLDP_NEIGHBOR_H__ */
+diff --git a/src/libnm-lldp/nm-lldp-rx.c b/src/libnm-lldp/nm-lldp-rx.c
+index 345c6d5661..90414b3ee7 100644
+--- a/src/libnm-lldp/nm-lldp-rx.c
++++ b/src/libnm-lldp/nm-lldp-rx.c
+@@ -255,7 +255,7 @@ lldp_rx_receive_datagram(int fd, GIOCondition condition, gpointer user_data)
+     } else
+         n->timestamp_usec = nm_utils_get_monotonic_timestamp_usec();
+ 
+-    r = nm_lldp_neighbor_parse(n);
++    r = nm_lldp_neighbor_parse(lldp_rx, n);
+     if (r < 0) {
+         _LOG2D(lldp_rx, "Failure parsing invalid LLDP datagram.");
+         return G_SOURCE_CONTINUE;
+diff --git a/src/libnm-lldp/nm-lldp-rx.h b/src/libnm-lldp/nm-lldp-rx.h
+index a3f3805376..d96ffcd888 100644
+--- a/src/libnm-lldp/nm-lldp-rx.h
++++ b/src/libnm-lldp/nm-lldp-rx.h
+@@ -68,7 +68,7 @@ NMLldpNeighbor **nm_lldp_rx_get_neighbors(NMLldpRX *lldp_rx, guint *out_len);
+ 
+ /*****************************************************************************/
+ 
+-NMLldpNeighbor *nm_lldp_neighbor_new_from_raw(const void *raw, size_t raw_size);
++NMLldpNeighbor *nm_lldp_neighbor_new_from_raw(NMLldpRX *lldp_rx, const void *raw, size_t raw_size);
+ 
+ NMLldpNeighbor *nm_lldp_neighbor_ref(NMLldpNeighbor *n);
+ NMLldpNeighbor *nm_lldp_neighbor_unref(NMLldpNeighbor *n);
+-- 
+2.46.0
+
+
+From 36b12bf4f96ed03dd07740070eaf183edf94b5dc Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Fri, 31 May 2024 10:49:50 +0200
+Subject: [PATCH 2/2] lldp: fix multiple access to argument in logging macro
+
+Fixes: 630de288d2e4 ('lldp: add libnm-lldp as fork of systemd's sd_lldp_rx')
+(cherry picked from commit 4365de5226aa80c01181a11988a731913e97b264)
+(cherry picked from commit a1c18ce20d826763db9b175addb36e691e45fda9)
+(cherry picked from commit 9905bcdcb73d12bb4a95b117e5efd5a9e168dcf4)
+---
+ src/libnm-lldp/nm-lldp-rx-internal.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/libnm-lldp/nm-lldp-rx-internal.h b/src/libnm-lldp/nm-lldp-rx-internal.h
+index 47d063ae70..1296a9d33f 100644
+--- a/src/libnm-lldp/nm-lldp-rx-internal.h
++++ b/src/libnm-lldp/nm-lldp-rx-internal.h
+@@ -34,7 +34,7 @@ struct _NMLldpRX {
+         NMLldpRX        *_lldp_rx = (lldp_rx);                                   \
+                                                                                  \
+         if (_NMLOG2_ENABLED(_level)) {                                           \
+-            _nm_log(level,                                                       \
++            _nm_log(_level,                                                      \
+                     _NMLOG2_DOMAIN,                                              \
+                     0,                                                           \
+                     _lldp_rx->config.log_ifname,                                 \
+-- 
+2.46.0
+

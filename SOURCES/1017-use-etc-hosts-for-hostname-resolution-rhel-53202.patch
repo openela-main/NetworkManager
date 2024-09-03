@@ -1,0 +1,267 @@
+From 2e88b3f69f552cb91057527de2acd6d8c95fb51d Mon Sep 17 00:00:00 2001
+From: Beniamino Galvani <bgalvani@redhat.com>
+Date: Wed, 19 Jun 2024 20:14:14 +0200
+Subject: [PATCH 1/2] nm-daemon-helper: add "service" argument
+
+Introduce a new argument to specify a comma-separated list of NSS
+services to use for the "resolve-address" command. For now only accept
+"dns" and "files"; the latter can be used to do a lookup into
+/etc/hosts.
+
+Note that previously the command failed in presence of extra
+arguments. Therefore, when downgrading NetworkManager without
+restarting the service, the previously-installed version of the daemon
+(newer) would spawn the helper with the extra argument, and the
+newly-installed version of the helper (older) would fail. This issue
+only impacts hostname resolution and can be fixed by just restarting
+the daemon.
+
+In the upgrade path everything works as before, with the only
+difference that the helper will use by default both "dns" and "files"
+services.
+
+Don't strictly check for the absence of extra arguments, so that in
+the future we can introduce more arguments without necessarily break
+the downgrade path.
+
+(cherry picked from commit 229bebfae95f789018433900868700c16a20a17b)
+(cherry picked from commit c36a74f698cc31fba20d9fd0a74d5cf74b832071)
+(cherry picked from commit e86ddd9fc590e3b4462464c0562ab115f654f5d1)
+---
+ src/nm-daemon-helper/nm-daemon-helper.c | 67 +++++++++++++++++--------
+ 1 file changed, 45 insertions(+), 22 deletions(-)
+
+diff --git a/src/nm-daemon-helper/nm-daemon-helper.c b/src/nm-daemon-helper/nm-daemon-helper.c
+index 810ea5fa94..32be93a4ef 100644
+--- a/src/nm-daemon-helper/nm-daemon-helper.c
++++ b/src/nm-daemon-helper/nm-daemon-helper.c
+@@ -55,26 +55,31 @@ cmd_version(void)
+ static int
+ cmd_resolve_address(void)
+ {
+-    nm_auto_free char *address = NULL;
++    nm_auto_free char *address  = NULL;
++    nm_auto_free char *services = NULL;
+     union {
+         struct sockaddr_in  in;
+         struct sockaddr_in6 in6;
+     } sockaddr;
+     socklen_t sockaddr_size;
+     char      name[NI_MAXHOST];
++    char     *saveptr = NULL;
++    char     *service;
++    char     *str;
+     int       ret;
+ 
+     address = read_arg();
+     if (!address)
+         return RETURN_INVALID_ARGS;
+ 
+-    if (more_args())
+-        return RETURN_INVALID_ARGS;
++    services = read_arg();
++    if (!services) {
++        /* Called by an old NM version which doesn't support the 'services'
++         * argument. Use both services. */
++        services = strdup("dns,files");
++    }
+ 
+     memset(&sockaddr, 0, sizeof(sockaddr));
+-#if defined(__GLIBC__)
+-    __nss_configure_lookup("hosts", "dns");
+-#endif
+ 
+     if (inet_pton(AF_INET, address, &sockaddr.in.sin_addr) == 1) {
+         sockaddr.in.sin_family = AF_INET;
+@@ -85,33 +90,51 @@ cmd_resolve_address(void)
+     } else
+         return RETURN_INVALID_ARGS;
+ 
+-    ret = getnameinfo((struct sockaddr *) &sockaddr,
+-                      sockaddr_size,
+-                      name,
+-                      sizeof(name),
+-                      NULL,
+-                      0,
+-                      NI_NAMEREQD);
+-    if (ret != 0) {
+-        if (ret == EAI_SYSTEM) {
+-            int  errsv = errno;
++    for (str = services; (service = strtok_r(str, ",", &saveptr)); str = NULL) {
++        if (!NM_IN_STRSET(service, "dns", "files")) {
++            fprintf(stderr, "Unsupported resolver service '%s'\n", service);
++            continue;
++        }
++
++#if defined(__GLIBC__)
++        __nss_configure_lookup("hosts", service);
++#endif
++
++        ret = getnameinfo((struct sockaddr *) &sockaddr,
++                          sockaddr_size,
++                          name,
++                          sizeof(name),
++                          NULL,
++                          0,
++                          NI_NAMEREQD);
++
++        if (ret == 0) {
++            printf("%s", name);
++            return RETURN_SUCCESS;
++        } else if (ret == EAI_SYSTEM) {
+             char buf[1024];
++            int  errsv = errno;
+ 
+             fprintf(stderr,
+-                    "getnameinfo() failed: %d (%s), system error: %d (%s)\n",
++                    "getnameinfo() via service '%s' failed: %d (%s), system error: %d (%s)\n",
++                    service,
+                     ret,
+                     gai_strerror(ret),
+                     errsv,
+                     _nm_strerror_r(errsv, buf, sizeof(buf)));
+         } else {
+-            fprintf(stderr, "getnameinfo() failed: %d (%s)\n", ret, gai_strerror(ret));
++            fprintf(stderr,
++                    "getnameinfo() via service '%s' failed: %d (%s)\n",
++                    service,
++                    ret,
++                    gai_strerror(ret));
+         }
+-        return RETURN_ERROR;
++#if !defined(__GLIBC__)
++        break;
++#endif
+     }
+ 
+-    printf("%s", name);
+-
+-    return RETURN_SUCCESS;
++    return RETURN_ERROR;
+ }
+ 
+ int
+-- 
+2.46.0
+
+
+From 824ab3b1033c5693cca6add3c6e15b2c8789a7df Mon Sep 17 00:00:00 2001
+From: Beniamino Galvani <bgalvani@redhat.com>
+Date: Wed, 19 Jun 2024 20:29:37 +0200
+Subject: [PATCH 2/2] core: also use /etc/hosts for hostname resolution
+
+Before introducing the hostname lookup via nm-daemon-helper and
+systemd-resolved, we used GLib's GResolver which internally relies on
+the libc resolver and generally also returns results from /etc/hosts.
+
+With the new mechanism we only ask to systemd-resolved (with
+NO_SYNTHESIZE) or perform the lookup via the "dns" NSS module. In both
+ways, /etc/hosts is not evaluated.
+
+Since users relied on having the hostname resolved via /etc/hosts,
+restore that behavior. Now, after trying the resolution via
+systemd-resolved and the "dns" NSS module, we also try via the "files"
+NSS module which reads /etc/hosts.
+
+Fixes: 27eae4043b27 ('device: add a nm_device_resolve_address()')
+(cherry picked from commit 410afccb32f5814c6aeebec837505e3f94b7408c)
+(cherry picked from commit cb54fe7ce9a69b1f8abfd6fa5f2bf83e971ff997)
+(cherry picked from commit e3861be84505d795c34347af84bbf73dc4196586)
+---
+ src/core/devices/nm-device-utils.c | 49 ++++++++++++++++++++++--------
+ 1 file changed, 36 insertions(+), 13 deletions(-)
+
+diff --git a/src/core/devices/nm-device-utils.c b/src/core/devices/nm-device-utils.c
+index ed0a27382a..75423528c5 100644
+--- a/src/core/devices/nm-device-utils.c
++++ b/src/core/devices/nm-device-utils.c
+@@ -233,14 +233,36 @@ resolve_addr_helper_cb(GObject *source, GAsyncResult *result, gpointer user_data
+     resolve_addr_complete(info, g_steal_pointer(&output), g_steal_pointer(&error));
+ }
+ 
++typedef enum {
++    RESOLVE_ADDR_SERVICE_NONE  = 0x0,
++    RESOLVE_ADDR_SERVICE_DNS   = 0x1,
++    RESOLVE_ADDR_SERVICE_FILES = 0x2,
++} ResolveAddrService;
++
+ static void
+-resolve_addr_spawn_helper(ResolveAddrInfo *info)
++resolve_addr_spawn_helper(ResolveAddrInfo *info, ResolveAddrService services)
+ {
+-    char addr_str[NM_INET_ADDRSTRLEN];
++    char     addr_str[NM_INET_ADDRSTRLEN];
++    char     str[256];
++    char    *s     = str;
++    gsize    len   = sizeof(str);
++    gboolean comma = FALSE;
++
++    nm_assert(services != RESOLVE_ADDR_SERVICE_NONE);
++    nm_assert((services & ~(RESOLVE_ADDR_SERVICE_DNS | RESOLVE_ADDR_SERVICE_FILES)) == 0);
++
++    if (services & RESOLVE_ADDR_SERVICE_DNS) {
++        nm_strbuf_append(&s, &len, "%sdns", comma ? "," : "");
++        comma = TRUE;
++    }
++    if (services & RESOLVE_ADDR_SERVICE_FILES) {
++        nm_strbuf_append(&s, &len, "%sfiles", comma ? "," : "");
++        comma = TRUE;
++    }
+ 
+     nm_inet_ntop(info->addr_family, &info->address, addr_str);
+-    _LOG2D(info, "start lookup via nm-daemon-helper");
+-    nm_utils_spawn_helper(NM_MAKE_STRV("resolve-address", addr_str),
++    _LOG2D(info, "start lookup via nm-daemon-helper using services: %s", str);
++    nm_utils_spawn_helper(NM_MAKE_STRV("resolve-address", addr_str, str),
+                           g_task_get_cancellable(info->task),
+                           resolve_addr_helper_cb,
+                           info);
+@@ -270,27 +292,28 @@ resolve_addr_resolved_cb(NMDnsSystemdResolved                    *resolved,
+         dbus_error = g_dbus_error_get_remote_error(error);
+         if (NM_STR_HAS_PREFIX(dbus_error, "org.freedesktop.resolve1.")) {
+             /* systemd-resolved is enabled but it couldn't resolve the
+-             * address via DNS.  Don't fall back to spawning the helper,
+-             * because the helper will possibly ask again to
++             * address via DNS. Spawn again the helper to check if we
++             * can find a result in /etc/hosts. Don't enable the 'dns'
++             * service otherwise the helper will possibly ask again to
+              * systemd-resolved (via /etc/resolv.conf), potentially using
+              * other protocols than DNS or returning synthetic results.
+              *
+-             * Consider the error as the final indication that the address
+-             * can't be resolved.
+-             *
+              * See: https://www.freedesktop.org/wiki/Software/systemd/resolved/#commonerrors
+              */
+-            resolve_addr_complete(info, NULL, g_error_copy(error));
++            resolve_addr_spawn_helper(info, RESOLVE_ADDR_SERVICE_FILES);
+             return;
+         }
+ 
+-        resolve_addr_spawn_helper(info);
++        /* systemd-resolved couldn't be contacted, use the helper */
++        resolve_addr_spawn_helper(info, RESOLVE_ADDR_SERVICE_DNS | RESOLVE_ADDR_SERVICE_FILES);
+         return;
+     }
+ 
+     if (names_len == 0) {
+         _LOG2D(info, "systemd-resolved returned no result");
+-        resolve_addr_complete(info, g_strdup(""), NULL);
++        /* We passed the NO_SYNTHESIZE flag and so systemd-resolved
++         * didn't look into /etc/hosts. Spawn the helper for that. */
++        resolve_addr_spawn_helper(info, RESOLVE_ADDR_SERVICE_FILES);
+         return;
+     }
+ 
+@@ -354,7 +377,7 @@ nm_device_resolve_address(int                 addr_family,
+         return;
+     }
+ 
+-    resolve_addr_spawn_helper(info);
++    resolve_addr_spawn_helper(info, RESOLVE_ADDR_SERVICE_DNS | RESOLVE_ADDR_SERVICE_FILES);
+ }
+ 
+ char *
+-- 
+2.46.0
+

@@ -1,0 +1,37 @@
+From 567853b4299f529ff886bd86292f680cd3b651c6 Mon Sep 17 00:00:00 2001
+From: Fernando Fernandez Mancera <ffmancera@riseup.net>
+Date: Thu, 25 Jul 2024 10:20:14 +0200
+Subject: [PATCH] ovs: wait for the link to be ready before activating
+
+When activating an ovs-interface we already wait for the cloned MAC
+address to be set, ifindex is present and platform link also present but
+in some cases this is not enough.
+
+If an udev rule is in place it might modify the interface when it is in
+a later stage of the activation causing some race conditions or
+problems. In order to solve that, we must wait until the link is fully
+initialized.
+
+(cherry picked from commit 83bf7a8cdb56154cee6ed53c1cc3046ed9db73b8)
+(cherry picked from commit 00e178351beba50b9d4c877364c6b46cc182dfcd)
+(cherry picked from commit 6328a1a0d1e4ae4f86c11b97a9ee54ec15fa233a)
+---
+ src/core/devices/ovs/nm-device-ovs-interface.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/src/core/devices/ovs/nm-device-ovs-interface.c b/src/core/devices/ovs/nm-device-ovs-interface.c
+index 17eb2c2d12..104b312674 100644
+--- a/src/core/devices/ovs/nm-device-ovs-interface.c
++++ b/src/core/devices/ovs/nm-device-ovs-interface.c
+@@ -155,6 +155,8 @@ check_waiting_for_link(NMDevice *device, const char *from)
+         reason = "no ifindex";
+     } else if (!(pllink = nm_platform_link_get(platform, ip_ifindex))) {
+         reason = "platform link not found";
++    } else if (!pllink->initialized) {
++        reason = "link is not ready yet";
+     } else if (priv->wait_link.cloned_mac
+                && !nm_utils_hwaddr_matches(priv->wait_link.cloned_mac,
+                                            -1,
+-- 
+2.45.2
+

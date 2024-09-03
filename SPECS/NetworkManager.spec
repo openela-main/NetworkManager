@@ -7,7 +7,7 @@
 %global epoch_version 1
 %global real_version 1.46.0
 %global rpm_version %{real_version}
-%global release_version 13
+%global release_version 18
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -223,6 +223,11 @@ Patch1007: 1007-platform-avoid-routes-resync-rhel36162.patch
 Patch1008: 1008-checkpoint-preserve-in-memory-state-rhel32493.patch
 Patch1010: 1010-allow-ip-configurations-without-addresses-rhel28544.patch
 Patch1011: 1011-vpn-handle-hint-tags-in-the-daemon-rhel44712.patch
+Patch1013: 1013-ovs-wait-for-the-link-to-be-ready-before-activating-rhel-49799.patch
+Patch1014: 1014-ovs-fix-triggering-stage3-without-dhcp-client-rhel-49799.patch
+Patch1015: 1015-policy-unblock-the-autoconnect-for-children-when-parent-is-available-rhel-53344.patch
+Patch1016: 1016-fix-lldp-crash-dereferencing-null-pointer-rhel-46200.patch
+Patch1017: 1017-use-etc-hosts-for-hostname-resolution-rhel-53202.patch
 
 Requires(post): systemd
 %if 0%{?fedora} || 0%{?rhel} >= 8
@@ -1278,6 +1283,23 @@ fi
 
 
 %changelog
+* Tue Aug 20 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.46.0-18
+- Fix crash dereferencing NULL pointer during debug logging (RHEL-46200)
+- Use /etc/hosts for hostname reesolution (RHEL-53202)
+
+* Tue Aug 13 2024 Wen Liang <wenliang@redhat.com> - 1:1.46.0-17
+- Unblock the autoconnect for children when parent is available (RHEL-53344)
+
+* Wed Jul 31 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.46.0-16
+- Revert OVS checkpoint rollback patches.
+- Fix OVS stage3 activation without DHCP client initialized (RHEL-49799)
+
+* Thu Jul 25 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.46.0-15
+- Wait for link to be ready before activating ovs-interface (RHEL-49799)
+
+* Tue Jul 23 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.46.0-14
+- Fix OVS checkpoint rollback (RHEL-32646)
+
 * Fri Jun 28 2024 Beniamino Galvani <bgalvani@redhat.com> - 1:1.46.0-13
 - Revert "Fix port reactivation when controller is deactivating" (RHEL-32646)
 
