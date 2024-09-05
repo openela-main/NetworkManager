@@ -7,7 +7,7 @@
 %global epoch_version 1
 %global real_version 1.46.0
 %global rpm_version %{real_version}
-%global release_version 18
+%global release_version 19
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -228,6 +228,9 @@ Patch1014: 1014-ovs-fix-triggering-stage3-without-dhcp-client-rhel-49799.patch
 Patch1015: 1015-policy-unblock-the-autoconnect-for-children-when-parent-is-available-rhel-53344.patch
 Patch1016: 1016-fix-lldp-crash-dereferencing-null-pointer-rhel-46200.patch
 Patch1017: 1017-use-etc-hosts-for-hostname-resolution-rhel-53202.patch
+Patch1018: 1018-retry-hostname-resolution-when-it-fails-rhel-55397.patch
+Patch1019: 1019-cloud-setup-allow-bigger-restart-bursts-rhel-56739.patch
+Patch1020: 1020-cloud-setup-ensure-azure-places-primary-address-first-rhel-56386.patch
 
 Requires(post): systemd
 %if 0%{?fedora} || 0%{?rhel} >= 8
@@ -1283,6 +1286,11 @@ fi
 
 
 %changelog
+* Fri Aug 30 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.46.0-19
+- Retry hostname resolutions when it fails (RHEL-55397)
+- cloud-setup: allow bigger restart bursts (RHEL-56739)
+- cloud-setup: Fix Azure primary and secondary address swap (RHEL-56386)
+
 * Tue Aug 20 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.46.0-18
 - Fix crash dereferencing NULL pointer during debug logging (RHEL-46200)
 - Use /etc/hosts for hostname reesolution (RHEL-53202)
