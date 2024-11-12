@@ -1,4 +1,4 @@
-From 81bba3f2321939bb9fd0200a91ac0bec79960732 Mon Sep 17 00:00:00 2001
+From 7183fbf6f35572f9fb0c2eeef5c155a3b9c82a54 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?=C3=8D=C3=B1igo=20Huguet?= <ihuguet@redhat.com>
 Date: Tue, 27 Aug 2024 12:08:16 +0200
 Subject: [PATCH] cloud-setup: azure: ensure that primary address is placed
@@ -15,7 +15,6 @@ callback and the address is added in the right position directly.
 Co-authored-by: Fernando Fernandez Mancera <ffmancera@riseup.net>
 (cherry picked from commit 72014db629cff33611ade58190d45a714efa1bbf)
 (cherry picked from commit c976e212372da9683a1e2f8618e3bcfdf21d5e25)
-(cherry picked from commit 55812963fde9519bb2752c46575a740fa0fea688)
 ---
  src/nm-cloud-setup/nmcs-provider-azure.c | 43 ++++++++++++++++--------
  1 file changed, 29 insertions(+), 14 deletions(-)

@@ -1,13 +1,12 @@
-
 %global wpa_supplicant_version 1:1.1
 
 %global ppp_version %(pkg-config --modversion pppd 2>/dev/null || sed -n 's/^#define\\s*VERSION\\s*"\\([^\\s]*\\)"$/\\1/p' %{_includedir}/pppd/patchlevel.h 2>/dev/null | grep . || echo bad)
 %global glib2_version %(pkg-config --modversion glib-2.0 2>/dev/null || echo bad)
 
 %global epoch_version 1
-%global real_version 1.46.0
+%global real_version 1.48.10
 %global rpm_version %{real_version}
-%global release_version 19
+%global release_version 2
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -212,25 +211,8 @@ Source9: readme-ifcfg-rh-migrated.txt
 Patch0001: 0001-revert-change-default-value-for-ipv4.dad-timeout-from-0-to-200ms.patch
 
 # Bugfixes that are only relevant until next rebase of the package.
-# Patch1001: 1001-some.patch
-Patch1001: 1001-drop-privateusers-directive-from-nm-cloud-setup-rhel27053.patch
-Patch1002: 1002-allow-rollback-on-internal-global-dns-rhel-29725.patch
-Patch1003: 1003-do-not-allow-ovs-bridge-and-port-to-be-parent-rhel-28545.patch
-Patch1004: 1004-nm-dispatcher-fix-crash-rhel28973.patch
-Patch1005: 1005-fix-race-condition-while-enumerating-devices-rhel25808.patch
-Patch1006: 1006-fix-lldp-for-ovs-bridge-ports-rhel31766.patch
-Patch1007: 1007-platform-avoid-routes-resync-rhel36162.patch
-Patch1008: 1008-checkpoint-preserve-in-memory-state-rhel32493.patch
-Patch1010: 1010-allow-ip-configurations-without-addresses-rhel28544.patch
-Patch1011: 1011-vpn-handle-hint-tags-in-the-daemon-rhel44712.patch
-Patch1013: 1013-ovs-wait-for-the-link-to-be-ready-before-activating-rhel-49799.patch
-Patch1014: 1014-ovs-fix-triggering-stage3-without-dhcp-client-rhel-49799.patch
-Patch1015: 1015-policy-unblock-the-autoconnect-for-children-when-parent-is-available-rhel-53344.patch
-Patch1016: 1016-fix-lldp-crash-dereferencing-null-pointer-rhel-46200.patch
-Patch1017: 1017-use-etc-hosts-for-hostname-resolution-rhel-53202.patch
-Patch1018: 1018-retry-hostname-resolution-when-it-fails-rhel-55397.patch
-Patch1019: 1019-cloud-setup-allow-bigger-restart-bursts-rhel-56739.patch
-Patch1020: 1020-cloud-setup-ensure-azure-places-primary-address-first-rhel-56386.patch
+Patch1001: 1001-cloud-setup-allow-bigger-restart-bursts-rhel-56740.patch
+Patch1002: 1002-cloud-setup-ensure-azure-places-primary-address-first-rhel-56387.patch
 
 Requires(post): systemd
 %if 0%{?fedora} || 0%{?rhel} >= 8
@@ -912,7 +894,8 @@ autoreconf --install --force
 	--with-resolvconf=no \
 	--with-netconfig=no \
 	--with-config-dns-rc-manager-default=%{dns_rc_manager_default} \
-	--with-config-logging-backend-default=%{logging_backend_default}
+	--with-config-logging-backend-default=%{logging_backend_default} \
+	--disable-autotools-deprecation
 
 %make_build
 
@@ -1286,68 +1269,70 @@ fi
 
 
 %changelog
-* Fri Aug 30 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.46.0-19
-- Retry hostname resolutions when it fails (RHEL-55397)
-- cloud-setup: allow bigger restart bursts (RHEL-56739)
-- cloud-setup: Fix Azure primary and secondary address swap (RHEL-56386)
+* Fri Aug 30 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.48.10-2
+- cloud-setup: Allow bigger restart bursts (RHEL-56740)
+- cloud-setup: Fix Azure swap of primary and secondary IP addresses (RHEL-56387)
 
-* Tue Aug 20 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.46.0-18
-- Fix crash dereferencing NULL pointer during debug logging (RHEL-46200)
-- Use /etc/hosts for hostname reesolution (RHEL-53202)
+* Thu Aug 22 2024 Íñigo Huguet <ihuguet@redhat.com> - 1:1.48.10-1
+- Unblock the autoconnect for children when parent is available (RHEL-46904)
+- Fix crash produced by malformed LLDP package when debug logging (RHEL-46199)
+- Support reapplying bridge-port VLANs (RHEL-26750)
+- Add small backoff time before resync (RHEL-29902)
 
-* Tue Aug 13 2024 Wen Liang <wenliang@redhat.com> - 1:1.46.0-17
-- Unblock the autoconnect for children when parent is available (RHEL-53344)
+* Fri Aug 09 2024 Fernando Fernandez Mancera <ferferna@redha.com> - 1:1.46.8-1
+- Stop writing offensive terms into keyfiles (RHEL-52597)
+- Remove offensive words (RHEL-33368)
+- Fix cloned-mac-address race condition with DHCP on ovs-interfaces (RHEL-49796)
 
-* Wed Jul 31 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.46.0-16
-- Revert OVS checkpoint rollback patches.
-- Fix OVS stage3 activation without DHCP client initialized (RHEL-49799)
+* Fri Jul 26 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.48.6-1
+- Wait until link is ready before activating for ovs-interface (RHEL-49796)
+- Fix rollback on OVS checkpoint (RHEL-31972)
+- Assert that the auto-activate list is empty on dispose (RHEL-44345)
 
-* Thu Jul 25 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.46.0-15
-- Wait for link to be ready before activating ovs-interface (RHEL-49799)
+* Fri Jul 05 2024 Stanislas Faye <sfaye@redhat.com> 1:1.48.4-1
+- Update to 1.48.4 release
+- Support matching a OVS system interface by MAC address (RHEL-34617)
+- When looking up the system hostname from the reverse DNS lookup of
+  addresses configured on interfaces, NetworkManager now takes into
+  account the content of /etc/hosts (RHEL-33435)
 
-* Tue Jul 23 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.46.0-14
-- Fix OVS checkpoint rollback (RHEL-32646)
+* Thu Jun 27 2024 Íñigo Huguet <ihuguet@redhat.com> 1:1.48.2-2
+- Add ipcalc as dependency of NetworkManager-dispatcher-routing-rules (RHEL-36648)
 
-* Fri Jun 28 2024 Beniamino Galvani <bgalvani@redhat.com> - 1:1.46.0-13
-- Revert "Fix port reactivation when controller is deactivating" (RHEL-32646)
+* Mon Jun 24 2024 Beniamino Galvani <bgalvani@redhat.com> 1:1.48.2-1
+- Update to 1.48.2 release
+- Save connection timestamps when shutting down (RHEL-35539)
+- Fix regression with OpenVPN dynamic challenge (RHEL-43720)
 
-* Thu Jun 27 2024 Íñigo Huguet <ihuguet@redhat.com> - 1:1.46.0-12
-- Add ipcalc as dependency of NetworkManager-dispatcher-routing-rules (RHEL-43583)
+* Thu May 30 2024 Lubomir Rintel <lkundrak@v3.sk> - 1:1.48.0-1
+- Upgrade to 1.48.0 release
 
-* Mon Jun 24 2024 Íñigo Huguet <ihuguet@redhat.com> - 1:1.46.0-11
-- Handle hint's tags from VPN secrets in the daemon (RHEL-44712)
+* Thu May 16 2024 Lubomir Rintel <lkundrak@v3.sk> - 1:1.47.91-1
+- Upgrade to 1.47.91 (rc2)
 
-* Mon Jun 17 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.46.0-10
-- Support IPv6 in IPSec VPN (RHEL-28544)
+* Fri May 03 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.47.90-1
+- Upgrade to 1.47.90 (rc1)
 
-* Sat Jun 01 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.46.0-9
-- Fix port reactivation when controller is deactivating (RHEL-32646)
+* Fri Apr 19 2024 Íñigo Huguet <ihuguet@redhat.com> - 1:1.47.5-1
+- Fix a crash during shutdown (RHEL-29856)
 
-* Thu May 23 2024 Beniamino Galvani <bgalvani@redhat.com> - 1:1.46.0-8
-- Preserve in-memory state of connections after checkpoint/rollback (RHEL-32493)
+* Fri Apr 05 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.47.4-1
+- Fix LLDP support for interfaces attached to OVS bridges. (RHEL-1418)
+- Fix NMCI crashes on ovs_mtu and bond tests. (RHEL-30348)
 
-* Tue May 14 2024 Íñigo Huguet <ihuguet@redhat.com> - 1:1.46.0-7
-- Fix CPU usage of 100% when updating routes cache (RHEL-36162)
+* Wed Apr 03 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1.47.3-2
+- Rebuild for CI gating
 
-* Mon Apr 08 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.46.0-6
-- Rebuild because build must go on 0day not 9.4.0
+* Tue Mar 26 2024 Gris Ge <fge@redhat.com> - 1.47.3-1
+- Upgrade to 1.47.3 release (development)
+- Support rollback on global DNS (RHEL-23446)
+- Support VLAN over OVS interface which holds the same name as OVS bridge (RHEL-26753)
 
-* Fri Apr 05 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.46.0-5
-- Fix LLDP for OVS Bridge ports (RHEL-31766)
+* Fri Mar 08 2024 Íñigo Huguet <ihuguet@redhat.com>
+- Update to 1.47.2 release (development)
+- Support sending DHCPRELEASE (RHEL-17310)
 
-* Tue Mar 26 2024 Beniamino Galvani <bgalvani@redhat.com> - 1:1.46.0-4
-- Fix nm-dispatcher crash (RHEL-28973)
-- Fix race condition while enumerating devices (RHEL-25808)
-
-* Fri Mar 22 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.46.0-3
-- Upgrade release number to build with the right target
-
-* Wed Mar 20 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1.46.0-2
-- Drop PrivateUser directive from nm-cloud-setup service (RHEL-27503)
-- Support rollback on global DNS (RHEL-29725)
-- Do not allow OVS bridge or port to be parent (RHEL-28545)
-
-* Thu Feb 22 2024 Stanislas FAYE <sfaye@redhat.com> - 1.46.0-1
+* Thu Feb 22 2024 Stanislas FAYE <sfaye@redhat.com>
 - Update to 1.46.0 release
 - Fix DHCPv4 lease can't be renewed after it expires (RHEL-24127)
 - Support the MACsec offload mode (RHEL-24337)

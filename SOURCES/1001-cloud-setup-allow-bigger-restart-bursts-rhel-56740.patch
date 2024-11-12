@@ -1,4 +1,4 @@
-From 6016ef0813a6c048369cc27ae85fc12699bacab5 Mon Sep 17 00:00:00 2001
+From 065584036f8072c994a8bdab210bcfd0ff483960 Mon Sep 17 00:00:00 2001
 From: Lubomir Rintel <lkundrak@v3.sk>
 Date: Tue, 27 Aug 2024 00:29:17 +0200
 Subject: [PATCH] cloud-setup: allow bigger restart bursts
@@ -14,13 +14,12 @@ interfere on a chance things really go awry.
 https://issues.redhat.com/browse/RHEL-49694
 (cherry picked from commit 927cff9f178911b2a146259a89bfcc9727cbd8c3)
 (cherry picked from commit 4dc35c72744f8820575ab0ea4638c4ddd880547d)
-(cherry picked from commit 097dfdf711d2f968d0580839f5a7a54731c68f34)
 ---
  src/nm-cloud-setup/nm-cloud-setup.service.in | 11 +++++++++++
  1 file changed, 11 insertions(+)
 
 diff --git a/src/nm-cloud-setup/nm-cloud-setup.service.in b/src/nm-cloud-setup/nm-cloud-setup.service.in
-index 4aa6017e48..10acf8add6 100644
+index e73654d892..ecb70e1c8e 100644
 --- a/src/nm-cloud-setup/nm-cloud-setup.service.in
 +++ b/src/nm-cloud-setup/nm-cloud-setup.service.in
 @@ -8,6 +8,17 @@ After=NetworkManager.service
