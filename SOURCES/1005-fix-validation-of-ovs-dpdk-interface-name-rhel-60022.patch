@@ -1,0 +1,57 @@
+From fd2768da4c3f966a215f01f09f8b5d7d534d0193 Mon Sep 17 00:00:00 2001
+From: Beniamino Galvani <bgalvani@redhat.com>
+Date: Tue, 24 Sep 2024 16:25:03 +0200
+Subject: [PATCH] libnm-core: fix validation of ovs-dpdk interface name
+
+An ovs-dpdk interface doesn't have a kernel link and doesn't have the
+15-character limit on the name.
+
+Fixes: 3efe070dfc7a ('libnm: validate "connection.interface-name" at one place only')
+
+Resolves: https://issues.redhat.com/browse/RHEL-60233
+
+https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/merge_requests/2044
+(cherry picked from commit fda05b0af085d9f7e4cc5691075dae63e7bf02a6)
+(cherry picked from commit f6e4e537757a414cc896bc1b402da8c9c9e32eaa)
+(cherry picked from commit c7035db5b43beff7ad7e91685ff17982a540d8e2)
+---
+ src/libnm-core-impl/nm-setting-connection.c | 4 ++--
+ src/libnm-core-impl/tests/test-general.c    | 2 +-
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/libnm-core-impl/nm-setting-connection.c b/src/libnm-core-impl/nm-setting-connection.c
+index b51cd46bdd..3298dce60a 100644
+--- a/src/libnm-core-impl/nm-setting-connection.c
++++ b/src/libnm-core-impl/nm-setting-connection.c
+@@ -1379,13 +1379,13 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
+                 if (connection)
+                     goto after_interface_name;
+                 iface_type = NMU_IFACE_ANY;
+-            } else if (NM_IN_STRSET(ovs_iface_type, "patch")) {
++            } else if (NM_IN_STRSET(ovs_iface_type, "patch", "dpdk")) {
+                 /* this interface type is internal to OVS. */
+                 iface_type = NMU_IFACE_OVS;
+             } else {
+                 /* This interface type also requires a netdev. We need to validate
+                  * for both OVS and KERNEL. */
+-                nm_assert(NM_IN_STRSET(ovs_iface_type, "internal", "system", "dpdk"));
++                nm_assert(NM_IN_STRSET(ovs_iface_type, "internal", "system"));
+                 iface_type = NMU_IFACE_OVS_AND_KERNEL;
+             }
+         } else
+diff --git a/src/libnm-core-impl/tests/test-general.c b/src/libnm-core-impl/tests/test-general.c
+index 0a39010c11..8d4ea069c5 100644
+--- a/src/libnm-core-impl/tests/test-general.c
++++ b/src/libnm-core-impl/tests/test-general.c
+@@ -10832,7 +10832,7 @@ test_connection_ovs_ifname(gconstpointer test_data)
+     /* good if bridge, port, or patch interface */
+     g_object_set(s_con, NM_SETTING_CONNECTION_INTERFACE_NAME, "ovs123123123123130123123", NULL);
+ 
+-    if (!ovs_iface_type || nm_streq(ovs_iface_type, "patch"))
++    if (!ovs_iface_type || NM_IN_STRSET(ovs_iface_type, "patch", "dpdk"))
+         nmtst_assert_connection_verifies(con);
+     else {
+         nmtst_assert_connection_unnormalizable(con,
+-- 
+2.45.2
+

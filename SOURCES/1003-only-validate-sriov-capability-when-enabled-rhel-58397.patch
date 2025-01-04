@@ -1,0 +1,74 @@
+From d9dd0aeff8ba2e1a0005c2e5751907c453927c5c Mon Sep 17 00:00:00 2001
+From: Gris Ge <fge@redhat.com>
+Date: Mon, 21 Oct 2024 21:13:29 +0800
+Subject: [PATCH] sriov: only valid sriov capacity when enabled
+
+NetworkManager current code will refuse to activate a connection if its
+interface has no SRIOV capacity but holding a empty SRIOV settings.
+
+This patch only valid SRIOV capacity when it is enabled(total_vfs > 0).
+
+Resolves: https://issues.redhat.com/browse/RHEL-58397
+
+Signed-off-by: Gris Ge <fge@redhat.com>
+(cherry picked from commit 421ccf8b4cb85c96db3bf1cb6a860e41a784c950)
+(cherry picked from commit c9e31e70cbf62c65cec460dc198712a61351e9f4)
+(cherry picked from commit 90a3b014683c3c98c9fb4bbe2add65510e7f1b31)
+---
+ src/core/devices/nm-device.c | 19 ++++++++++---------
+ 1 file changed, 10 insertions(+), 9 deletions(-)
+
+diff --git a/src/core/devices/nm-device.c b/src/core/devices/nm-device.c
+index 4780003a0a..e86c32a902 100644
+--- a/src/core/devices/nm-device.c
++++ b/src/core/devices/nm-device.c
+@@ -9468,6 +9468,7 @@ check_connection_compatible(NMDevice     *self,
+     NMSettingMatch       *s_match;
+     const GSList         *specs;
+     gboolean              has_match = FALSE;
++    NMSettingSriov       *s_sriov   = NULL;
+ 
+     klass = NM_DEVICE_GET_CLASS(self);
+     if (klass->connection_type_check_compatible) {
+@@ -9485,12 +9486,14 @@ check_connection_compatible(NMDevice     *self,
+         return FALSE;
+     }
+ 
+-    if (!nm_device_has_capability(self, NM_DEVICE_CAP_SRIOV)
+-        && nm_connection_get_setting(connection, NM_TYPE_SETTING_SRIOV)) {
+-        nm_utils_error_set_literal(error,
+-                                   NM_UTILS_ERROR_CONNECTION_AVAILABLE_TEMPORARY,
+-                                   "device does not support SR-IOV");
+-        return FALSE;
++    if (!nm_device_has_capability(self, NM_DEVICE_CAP_SRIOV)) {
++        s_sriov = (NMSettingSriov *) nm_connection_get_setting(connection, NM_TYPE_SETTING_SRIOV);
++        if (s_sriov && nm_setting_sriov_get_total_vfs(s_sriov)) {
++            nm_utils_error_set_literal(error,
++                                       NM_UTILS_ERROR_CONNECTION_AVAILABLE_TEMPORARY,
++                                       "device does not support SR-IOV");
++            return FALSE;
++        }
+     }
+ 
+     conn_iface = nm_manager_get_connection_iface(NM_MANAGER_GET, connection, NULL, NULL, &local);
+@@ -10101,7 +10104,7 @@ activate_stage1_device_prepare(NMDevice *self)
+             s_sriov = nm_device_get_applied_setting(self, NM_TYPE_SETTING_SRIOV);
+         }
+ 
+-        if (s_sriov) {
++        if (s_sriov && nm_device_has_capability(self, NM_DEVICE_CAP_SRIOV)) {
+             nm_auto_freev NMPlatformVF **plat_vfs = NULL;
+             gs_free_error GError        *error    = NULL;
+             NMSriovVF                   *vf;
+@@ -10109,8 +10112,6 @@ activate_stage1_device_prepare(NMDevice *self)
+             guint                        num;
+             guint                        i;
+ 
+-            nm_assert(nm_device_has_capability(self, NM_DEVICE_CAP_SRIOV));
+-
+             autoprobe = nm_setting_sriov_get_autoprobe_drivers(s_sriov);
+             if (autoprobe == NM_TERNARY_DEFAULT) {
+                 autoprobe = nm_config_data_get_connection_default_int64(
+-- 
+2.45.2
+

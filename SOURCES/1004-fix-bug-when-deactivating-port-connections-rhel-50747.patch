@@ -1,0 +1,136 @@
+From 3b1181dc02172033d8e2bb7fd2336b2ea0355a87 Mon Sep 17 00:00:00 2001
+From: Beniamino Galvani <bgalvani@redhat.com>
+Date: Mon, 23 Sep 2024 17:28:03 +0200
+Subject: [PATCH] device: fix bug when deactivating port connections
+ asynchronously
+
+When the attach_port()/detach_port() methods do not return immediately
+(currently, only for OVS ports), the following situation can arise:
+
+ - nm_device_controller_attach_port() starts the attachment by sending
+   the command to ovsdb. Note that here we don't set
+   `PortInfo->port_is_attached` to TRUE yet; that happens only after
+   the asynchronous command returns;
+
+ - the activation of the port gets interrupted because the connection
+   is deleted;
+
+ - the port device enters the deactivating state, triggering function
+   port_state_changed()
+
+ - the function calls nm_device_controller_release_port() which checks
+   whether the port is already attached; since
+   `PortInfo->port_is_attached` is not set yet, it assumes the port
+   doesn't need to be detached;
+
+ - in the meantime, the ovsdb operation succeeds. As a consequence,
+   the kernel link is created even if the connection no longer exists.
+
+Fix this by turning `port_is_attached` into a tri-state variable that
+also tracks when the port is attaching. When it is, we need to perform
+an explicit detach during deactivation.
+
+Fixes: 9fcbc6b37dec ('device: make attach_port() asynchronous')
+
+https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/merge_requests/2043
+
+Resolves: https://issues.redhat.com/browse/RHEL-58026
+(cherry picked from commit a8329587c8bdd53e2bc4513a4e82529727cfa5ef)
+(cherry picked from commit d809ca6db24b5145fcc1857b962afb7ae17d07a5)
+(cherry picked from commit ca6ca684b21235f706b02cee42075f2ee3cb1795)
+---
+ src/core/devices/nm-device.c | 27 ++++++++++++++++++++++-----
+ 1 file changed, 22 insertions(+), 5 deletions(-)
+
+diff --git a/src/core/devices/nm-device.c b/src/core/devices/nm-device.c
+index e86c32a902..f9a2e7e8fe 100644
+--- a/src/core/devices/nm-device.c
++++ b/src/core/devices/nm-device.c
+@@ -126,12 +126,18 @@ typedef enum _nm_packed {
+     ADDR_METHOD_STATE_FAILED,
+ } AddrMethodState;
+ 
++typedef enum {
++    PORT_STATE_NOT_ATTACHED,
++    PORT_STATE_ATTACHED,
++    PORT_STATE_ATTACHING,
++} PortState;
++
+ typedef struct {
+     CList         lst_port;
+     NMDevice     *port;
+     GCancellable *cancellable;
+     gulong        watch_id;
+-    bool          port_is_attached;
++    PortState     port_state;
+     bool          configure;
+ } PortInfo;
+ 
+@@ -6693,7 +6699,7 @@ attach_port_done(NMDevice *self, NMDevice *port, gboolean success)
+     if (!info)
+         return;
+ 
+-    info->port_is_attached = success;
++    info->port_state = (success ? PORT_STATE_ATTACHED : PORT_STATE_NOT_ATTACHED);
+ 
+     nm_device_port_notify_attach_as_port(info->port, success);
+ 
+@@ -6756,7 +6762,7 @@ nm_device_controller_attach_port(NMDevice *self, NMDevice *port, NMConnection *c
+     if (!info)
+         return;
+ 
+-    if (info->port_is_attached)
++    if (info->port_state == PORT_STATE_ATTACHED)
+         success = TRUE;
+     else {
+         configure = (info->configure && connection != NULL);
+@@ -6765,6 +6771,7 @@ nm_device_controller_attach_port(NMDevice *self, NMDevice *port, NMConnection *c
+ 
+         nm_clear_g_cancellable(&info->cancellable);
+         info->cancellable = g_cancellable_new();
++        info->port_state  = PORT_STATE_ATTACHING;
+         success           = NM_DEVICE_GET_CLASS(self)->attach_port(self,
+                                                          port,
+                                                          connection,
+@@ -6819,6 +6826,7 @@ nm_device_controller_release_port(NMDevice           *self,
+     PortInfo                 *info;
+     gs_unref_object NMDevice *self_free = NULL;
+     gs_unref_object NMDevice *port_free = NULL;
++    const char               *port_state_str;
+ 
+     g_return_if_fail(NM_DEVICE(self));
+     g_return_if_fail(NM_DEVICE(port));
+@@ -6830,11 +6838,20 @@ nm_device_controller_release_port(NMDevice           *self,
+ 
+     info = find_port_info(self, port);
+ 
++    if (info->port_state == PORT_STATE_ATTACHED)
++        port_state_str = "(attached)";
++    else if (info->port_state == PORT_STATE_NOT_ATTACHED)
++        port_state_str = "(not attached)";
++    else {
++        nm_assert(info->port_state == PORT_STATE_ATTACHING);
++        port_state_str = "(attaching)";
++    }
++
+     _LOGT(LOGD_CORE,
+           "controller: release one port " NM_HASH_OBFUSCATE_PTR_FMT "/%s %s%s",
+           NM_HASH_OBFUSCATE_PTR(port),
+           nm_device_get_iface(port),
+-          !info ? "(not registered)" : (info->port_is_attached ? "(attached)" : "(not attached)"),
++          !info ? "(not registered)" : port_state_str,
+           release_type == RELEASE_PORT_TYPE_CONFIG_FORCE
+               ? " (force-configure)"
+               : (release_type == RELEASE_PORT_TYPE_CONFIG ? " (configure)" : "(no-config)"));
+@@ -6850,7 +6867,7 @@ nm_device_controller_release_port(NMDevice           *self,
+     nm_clear_g_cancellable(&info->cancellable);
+ 
+     /* first, let subclasses handle the release ... */
+-    if (info->port_is_attached || nm_device_sys_iface_state_is_external(port)
++    if (info->port_state != PORT_STATE_NOT_ATTACHED || nm_device_sys_iface_state_is_external(port)
+         || release_type >= RELEASE_PORT_TYPE_CONFIG_FORCE) {
+         NMTernary ret;
+ 
+-- 
+2.45.2
+

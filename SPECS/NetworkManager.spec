@@ -6,7 +6,7 @@
 %global epoch_version 1
 %global real_version 1.48.10
 %global rpm_version %{real_version}
-%global release_version 2
+%global release_version 3
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -213,6 +213,9 @@ Patch0001: 0001-revert-change-default-value-for-ipv4.dad-timeout-from-0-to-200ms
 # Bugfixes that are only relevant until next rebase of the package.
 Patch1001: 1001-cloud-setup-allow-bigger-restart-bursts-rhel-56740.patch
 Patch1002: 1002-cloud-setup-ensure-azure-places-primary-address-first-rhel-56387.patch
+Patch1003: 1003-only-validate-sriov-capability-when-enabled-rhel-58397.patch
+Patch1004: 1004-fix-bug-when-deactivating-port-connections-rhel-50747.patch
+Patch1005: 1005-fix-validation-of-ovs-dpdk-interface-name-rhel-60022.patch
 
 Requires(post): systemd
 %if 0%{?fedora} || 0%{?rhel} >= 8
@@ -1269,6 +1272,11 @@ fi
 
 
 %changelog
+* Tue Nov 12 2024 Beniamino Galvani <bgalvani@redhat.com> - 1:1.48.10-3
+- Only validate the SR-IOV device capability when SR-IOV is enabled (RHEL-58397)
+- Fix bug when deactivating port connections (RHEL-50747)
+- Fix validation of ovs-dpdk interface name (RHEL-60022)
+
 * Fri Aug 30 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.48.10-2
 - cloud-setup: Allow bigger restart bursts (RHEL-56740)
 - cloud-setup: Fix Azure swap of primary and secondary IP addresses (RHEL-56387)
