@@ -1,4 +1,4 @@
-From a55f8f9151878f8a0c634316713abd2c77dfaea9 Mon Sep 17 00:00:00 2001
+From e49026b4856fd492eb6e30a18133414841eeb609 Mon Sep 17 00:00:00 2001
 From: Thomas Haller <thaller@redhat.com>
 Date: Wed, 3 May 2023 11:43:33 +0200
 Subject: [PATCH 1/5] libnm/trivial: rename internal connection-get-setting
@@ -376,7 +376,7 @@ index 67a9034dcc..fc4bc51c17 100644
 2.41.0
 
 
-From 91bae3c3bd5a80cab7950f8d85a9669ca1f721fe Mon Sep 17 00:00:00 2001
+From 15f0394acf2b0866190a3f603150a7e1ee96833c Mon Sep 17 00:00:00 2001
 From: Thomas Haller <thaller@redhat.com>
 Date: Thu, 4 May 2023 11:34:58 +0200
 Subject: [PATCH 2/5] libnm: cleanup redundant nm_connection_get_setting
@@ -566,7 +566,7 @@ index b6f721371f..a4404ba87b 100644
 2.41.0
 
 
-From d78c89ef0a031fde52107d88ce4a0600be16323f Mon Sep 17 00:00:00 2001
+From fdf8ad3fdd8ddf03f8acd85a3e8eb4af67722699 Mon Sep 17 00:00:00 2001
 From: Thomas Haller <thaller@redhat.com>
 Date: Wed, 3 May 2023 12:01:14 +0200
 Subject: [PATCH 3/5] libnm: expose _nm_connection_get_setting_by_metatype() in
@@ -640,7 +640,7 @@ index 1857e03bbd..695cd75c04 100644
 2.41.0
 
 
-From 5c2b3730d8ab5ece5aba1ca23adf2e4f624233da Mon Sep 17 00:00:00 2001
+From 0a8007057e5075df95a5dfc7ebb35269a2e99266 Mon Sep 17 00:00:00 2001
 From: Thomas Haller <thaller@redhat.com>
 Date: Wed, 3 May 2023 12:15:47 +0200
 Subject: [PATCH 4/5] core: add nm_settings_connection_get_setting() helper
@@ -715,7 +715,7 @@ index 893b0d7b74..68d75ab6f4 100644
 2.41.0
 
 
-From 3e68288800dd1e9499edcc3b32b8d8f61f588b15 Mon Sep 17 00:00:00 2001
+From 3608f7e2bbdd0e49450c55a7fbf882d360edfd74 Mon Sep 17 00:00:00 2001
 From: Fernando Fernandez Mancera <ffmancera@riseup.net>
 Date: Tue, 4 Jul 2023 12:50:29 +0200
 Subject: [PATCH 5/5] utils: extend connection matching function for UUID in

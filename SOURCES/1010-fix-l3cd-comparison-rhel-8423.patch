@@ -1,4 +1,4 @@
-From 23544ebaa6873350edad13c1e2c3e1f5efe490c3 Mon Sep 17 00:00:00 2001
+From a7005248bbd8d563962c6a68ed7f1ead58e9df26 Mon Sep 17 00:00:00 2001
 From: Beniamino Galvani <bgalvani@redhat.com>
 Date: Tue, 28 Mar 2023 09:32:13 +0200
 Subject: [PATCH] core: fix l3cd comparison
@@ -86,5 +86,5 @@ index d4c7f0c5fb..afdd53920d 100644
          }
  
 -- 
-2.43.0
+2.41.0
 

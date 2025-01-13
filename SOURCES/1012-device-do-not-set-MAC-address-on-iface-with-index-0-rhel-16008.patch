@@ -1,4 +1,4 @@
-From 51901a2266d7d1ffd3465906c55064c512cb075d Mon Sep 17 00:00:00 2001
+From c62f49f07ed84b266427feb53469109d8878c496 Mon Sep 17 00:00:00 2001
 From: Gris Ge <fge@redhat.com>
 Date: Wed, 12 Jul 2023 16:22:03 +0800
 Subject: [PATCH] device: do not set MAC address on iface with index <=0

@@ -1,4 +1,4 @@
-From f06345c2ef66cc3df639019026ba46d0795376e8 Mon Sep 17 00:00:00 2001
+From f240f3d6d901b78fd50b945f08aa4f9d39625c4e Mon Sep 17 00:00:00 2001
 From: Yuki Inoguchi <inoguchi.yuki@fujitsu.com>
 Date: Tue, 10 Oct 2023 17:50:37 +0900
 Subject: [PATCH] device: disable IPv6 in NetworkManager when disabled in

@@ -6,7 +6,7 @@
 %global epoch_version 1
 %global real_version 1.40.16
 %global rpm_version %{real_version}
-%global release_version 15
+%global release_version 18
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -205,11 +205,14 @@ Patch1006: 1006-fix-read-infiniband-from-ifcfg-rh2209164.patch
 Patch1007: 1007-unblock-autoconnect-on-reapply-rh2207690.patch
 Patch1008: 1008-cloud-setup-fix-terminating-in-reconfig-rh2221903.patch
 Patch1009: 1009-manager-allow-controller-activation-if-device-is-dea-rhel-5119.patch
-Patch1010: 1010-better-dispatch-way-for-dns-changes-RHEL-14886.patch
-Patch1011: 1011-device-do-not-set-MAC-address-on-iface-with-index-0-RHEL-17839.patch
-Patch1012: 1012-fix-matching-existing-connection-by-UUID-on-restart-rhel-5122.patch
-Patch1013: 1013-fix-l3cd-comparison-rhel-20600.patch
-Patch1014: 1014-device-disable-IPv6-in-NetworkManager-when-disabled-rhel-24968.patch
+Patch1010: 1010-fix-l3cd-comparison-rhel-8423.patch
+Patch1011: 1011-dispatch-dns-change-event-rhel-10195.patch
+Patch1012: 1012-device-do-not-set-MAC-address-on-iface-with-index-0-rhel-16008.patch
+Patch1013: 1013-fix-matching-existing-connection-by-UUID-on-restart-rhel-5119.patch
+Patch1014: 1014-device-disable-IPv6-in-NetworkManager-when-disabled-rhel-10450.patch
+Patch1015: 1015-use-etc-hosts-for-hostname-resolution-rhel-53200.patch
+Patch1016: 1016-vpn-place-gateway-route-to-table-defined-in-ipvx-route-table-rhel-73051.patch
+Patch1017: 1017-vpn-fix-routing-rules-support-in-vpn-conenctions-rhel-73052.patch
 
 Requires(post): systemd
 %if 0%{?fedora} || 0%{?rhel} >= 8
@@ -393,7 +396,7 @@ Obsoletes: NetworkManager < %{obsoletes_device_plugins}
 # Team was split from main NM binary between 0.9.10 and 1.0
 # We need this Obsoletes in addition to the one above
 # (git:3aede801521ef7bff039e6e3f1b3c7b566b4338d).
-Obsoletes: NetworkManager < 1.0.0
+Obsoletes: NetworkManager < 1:1.0.0
 %endif
 
 %description team
@@ -1245,20 +1248,30 @@ fi
 
 
 %changelog
-* Thu Feb 15 2024 Íñigo Huguet <ihuguet@redhat.com - 1:1.40.16-15
-- Disable IPv6 in NetworkManager when disabled in kernel (RHEL-24968)
+* Tue Jan 07 2025 Wen Liang <wenliang@redhat.com> - 1:1.40.16-18
+- vpn: fix routing rules support in vpn conenctions (RHEL-73052)
+- vpn: Place gateway route to table defined in ipvx.route-table (RHEL-73051)
 
-* Mon Jan 15 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.40.16-14
-- Fix l3cd comparison (RHEL-20600)
+* Wed Aug 21 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.40.16-17
+- Rebuild to use the right tag
 
-* Fri Dec 08 2023 Wen Liang <wenliang@redhat.com> - 1:1.40.16-13
-- Fix matching existing connection by UUID on restart (RHEL-5122)
+* Tue Aug 20 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.40.16-16
+- Use /etc/hosts for hostname resolution (RHEL-53200)
 
-* Mon Dec 04 2023 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.40.16-12
-- device: do not set MAC address on iface with index <=0 (RHEL-17839)
+* Fri Feb 09 2024 Íñigo Huguet <ihuguet@redhat.com> - 1:1.40.16-15
+- Suppress NetworkManager's harmless warning when IPv6 is disabled at kernel level (RHEL-10450)
 
-* Thu Nov 16 2023 Íñigo Huguet <ihuguet@redhat.com> - 1:1.40.16-11
-- New dispatcher event 'dns-change' (RHEL-14886)
+* Tue Dec 12 2023 Wen Liang <wenliang@redhat.com> - 1:1.40.16-14
+- Fix matching existing connection by UUID on restart (RHEL-5119)
+
+* Mon Dec 04 2023 Fernando Fernandez <ferferna@redhat.com> - 1:1.40.16-13
+- device: do not set MAC address on iface with index <=0 (RHEL-16008)
+
+* Thu Oct 19 2023 Íñigo Huguet <ihuguet@redhat.com> - 1:1.40.16-12
+- Dispatch "dns-change" event (RHEL-10195)
+
+* Wed Oct 18 2023 Íñigo Huguet <ihuguet@redhat.com> - 1:1.40.16-11
+- Correctly update DNS changes retrieved from DHCPv4 (RHEL-8423)
 
 * Wed Oct 04 2023 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.40.16-10
 - manager: allow controller activation if device is deactivating (RHEL-5119) 

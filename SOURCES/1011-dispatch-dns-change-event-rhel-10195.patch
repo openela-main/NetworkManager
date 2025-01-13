@@ -1,4 +1,4 @@
-From 5b8d8494f9c00de2fd1c7f30aafef4e19566bf6b Mon Sep 17 00:00:00 2001
+From 818352a0342358f4c62465aa5b3590b8e5fb924d Mon Sep 17 00:00:00 2001
 From: Gris Ge <fge@redhat.com>
 Date: Tue, 26 Sep 2023 15:00:32 +0800
 Subject: [PATCH 1/2] emit DNS CONFIG_CHANGED signal even dns=none
@@ -86,7 +86,7 @@ index 0b7c9eddca..d9e7643fa2 100644
 2.41.0
 
 
-From a2c92e569d7bf99365dc809529f863f03d426241 Mon Sep 17 00:00:00 2001
+From 206d974bfbd3f0496d2263ec8a12ee58ce085b0e Mon Sep 17 00:00:00 2001
 From: Gris Ge <fge@redhat.com>
 Date: Wed, 18 Oct 2023 15:03:13 +0800
 Subject: [PATCH 2/2] dispatch `dns-change` dispatcher event
