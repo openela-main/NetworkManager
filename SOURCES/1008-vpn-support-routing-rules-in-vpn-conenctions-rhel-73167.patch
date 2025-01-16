@@ -1,0 +1,238 @@
+From 50331402dae72990a268704e4047d6c762572755 Mon Sep 17 00:00:00 2001
+From: Wen Liang <wenliang@redhat.com>
+Date: Fri, 20 Dec 2024 10:10:25 -0500
+Subject: [PATCH 1/1] vpn: fix routing rules support in vpn conenctions
+
+This commit introduces the ability to manage routing rules specifically
+for VPN connections. These rules allow finer control over traffic
+routing by enabling the specification of policy-based routing for
+traffic over the VPN.
+
+- Updated the connection backend to apply rules during VPN activation.
+- Ensured proper cleanup of routing rules upon VPN deactivation.
+
+This enhancement improves VPN usability in scenarios requiring advanced
+routing configurations, such as split tunneling and traffic
+prioritization.
+
+Resolves: https://issues.redhat.com/browse/RHEL-70160
+https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/merge_requests/2092
+https://gitlab.freedesktop.org/NetworkManager/NetworkManager-ci/-/merge_requests/1842
+(cherry picked from commit 308e34a501482d01c1cc6c87c38791ad9f34dc1f)
+(cherry picked from commit a24b347e93e37b04aa0f5698efcb462c02517c09)
+(cherry picked from commit b5c46f8a8d644e1c5a6dc07e06d5dab3338e9a91)
+---
+ src/core/devices/nm-device.c     | 62 +++++++++++++++++++-------------
+ src/core/devices/nm-device.h     |  6 ++++
+ src/core/vpn/nm-vpn-connection.c |  7 +++-
+ 3 files changed, 50 insertions(+), 25 deletions(-)
+
+diff --git a/src/core/devices/nm-device.c b/src/core/devices/nm-device.c
+index f9a2e7e8fe..070ba46495 100644
+--- a/src/core/devices/nm-device.c
++++ b/src/core/devices/nm-device.c
+@@ -10327,31 +10327,34 @@ lldp_setup(NMDevice *self, NMTernary enabled)
+  *       as externally added ones. Don't restart NetworkManager if
+  *       you care about that.
+  */
+-static void
+-_routing_rules_sync(NMDevice *self, NMTernary set_mode)
++void
++nm_routing_rules_sync(NMConnection *applied_connection,
++                      NMTernary     set_mode,
++                      GPtrArray *(*get_extra_rules)(NMDevice *self),
++                      NMDevice *self,
++                      NMNetns  *netns)
+ {
+-    NMDevicePrivate  *priv               = NM_DEVICE_GET_PRIVATE(self);
+-    NMPGlobalTracker *global_tracker     = nm_netns_get_global_tracker(nm_device_get_netns(self));
+-    NMDeviceClass    *klass              = NM_DEVICE_GET_CLASS(self);
++    NMPGlobalTracker *global_tracker     = nm_netns_get_global_tracker(netns);
+     gboolean          untrack_only_dirty = FALSE;
+     gboolean          keep_deleted_rules;
+     gpointer          user_tag_1;
+     gpointer          user_tag_2;
+ 
+-    /* take two arbitrary user-tag pointers that belong to @self. */
+-    user_tag_1 = &priv->v4_route_table;
+-    user_tag_2 = &priv->v6_route_table;
++    if (self) {
++        user_tag_1 = ((guint32 *) self) + 1;
++        user_tag_2 = ((guint32 *) self) + 2;
++    } else {
++        user_tag_1 = ((guint32 *) applied_connection) + 1;
++        user_tag_2 = ((guint32 *) applied_connection) + 2;
++    }
+ 
+     if (set_mode == NM_TERNARY_TRUE) {
+-        NMConnection      *applied_connection;
+         NMSettingIPConfig *s_ip;
+         guint              i, num;
+         int                is_ipv4;
+ 
+         untrack_only_dirty = TRUE;
+ 
+-        applied_connection = nm_device_get_applied_connection(self);
+-
+         for (is_ipv4 = 0; applied_connection && is_ipv4 < 2; is_ipv4++) {
+             int addr_family = is_ipv4 ? AF_INET : AF_INET6;
+ 
+@@ -10390,10 +10393,10 @@ _routing_rules_sync(NMDevice *self, NMTernary set_mode)
+             }
+         }
+ 
+-        if (klass->get_extra_rules) {
++        if (get_extra_rules) {
+             gs_unref_ptrarray GPtrArray *extra_rules = NULL;
+ 
+-            extra_rules = klass->get_extra_rules(self);
++            extra_rules = get_extra_rules(self);
+             if (extra_rules) {
+                 for (i = 0; i < extra_rules->len; i++) {
+                     nmp_global_tracker_track_rule(
+@@ -10408,7 +10411,7 @@ _routing_rules_sync(NMDevice *self, NMTernary set_mode)
+     }
+ 
+     nmp_global_tracker_untrack_all(global_tracker, user_tag_1, !untrack_only_dirty, TRUE);
+-    if (klass->get_extra_rules)
++    if (get_extra_rules)
+         nmp_global_tracker_untrack_all(global_tracker, user_tag_2, !untrack_only_dirty, TRUE);
+ 
+     keep_deleted_rules = FALSE;
+@@ -10468,8 +10471,8 @@ tc_commit(NMDevice *self)
+ static void
+ activate_stage2_device_config(NMDevice *self)
+ {
+-    NMDevicePrivate *priv = NM_DEVICE_GET_PRIVATE(self);
+-    NMDeviceClass   *klass;
++    NMDevicePrivate *priv  = NM_DEVICE_GET_PRIVATE(self);
++    NMDeviceClass   *klass = NM_DEVICE_GET_CLASS(self);
+     NMActStageReturn ret;
+     NMSettingWired  *s_wired;
+     gboolean         no_firmware = FALSE;
+@@ -10494,7 +10497,11 @@ activate_stage2_device_config(NMDevice *self)
+         priv->tc_committed = TRUE;
+     }
+ 
+-    _routing_rules_sync(self, NM_TERNARY_TRUE);
++    nm_routing_rules_sync(nm_device_get_applied_connection(self),
++                          NM_TERNARY_TRUE,
++                          klass->get_extra_rules,
++                          self,
++                          nm_device_get_netns(self));
+ 
+     if (!nm_device_sys_iface_state_is_external_or_assume(self)) {
+         if (!nm_device_bring_up_full(self, FALSE, TRUE, &no_firmware)) {
+@@ -10506,7 +10513,6 @@ activate_stage2_device_config(NMDevice *self)
+         }
+     }
+ 
+-    klass = NM_DEVICE_GET_CLASS(self);
+     if (klass->act_stage2_config_also_for_external_or_assume
+         || !nm_device_sys_iface_state_is_external_or_assume(self)) {
+         NMDeviceStateReason failure_reason = NM_DEVICE_STATE_REASON_NONE;
+@@ -13881,7 +13887,11 @@ check_and_reapply_connection(NMDevice            *self,
+ 
+         nm_device_activate_schedule_stage3_ip_config(self, FALSE);
+ 
+-        _routing_rules_sync(self, NM_TERNARY_TRUE);
++        nm_routing_rules_sync(nm_device_get_applied_connection(self),
++                              NM_TERNARY_TRUE,
++                              klass->get_extra_rules,
++                              self,
++                              nm_device_get_netns(self));
+ 
+         reactivate_proxy_config(self);
+ 
+@@ -16444,6 +16454,7 @@ static void
+ nm_device_cleanup(NMDevice *self, NMDeviceStateReason reason, CleanupType cleanup_type)
+ {
+     NMDevicePrivate *priv;
++    NMDeviceClass   *klass = NM_DEVICE_GET_CLASS(self);
+     int              ifindex;
+ 
+     g_return_if_fail(NM_IS_DEVICE(self));
+@@ -16468,8 +16479,8 @@ nm_device_cleanup(NMDevice *self, NMDeviceStateReason reason, CleanupType cleanu
+     }
+ 
+     /* Call device type-specific deactivation */
+-    if (NM_DEVICE_GET_CLASS(self)->deactivate)
+-        NM_DEVICE_GET_CLASS(self)->deactivate(self);
++    if (klass->deactivate)
++        klass->deactivate(self);
+ 
+     ifindex = nm_device_get_ip_ifindex(self);
+ 
+@@ -16491,8 +16502,11 @@ nm_device_cleanup(NMDevice *self, NMDeviceStateReason reason, CleanupType cleanu
+ 
+     priv->tc_committed = FALSE;
+ 
+-    _routing_rules_sync(self,
+-                        cleanup_type == CLEANUP_TYPE_KEEP ? NM_TERNARY_DEFAULT : NM_TERNARY_FALSE);
++    nm_routing_rules_sync(nm_device_get_applied_connection(self),
++                          cleanup_type == CLEANUP_TYPE_KEEP ? NM_TERNARY_DEFAULT : NM_TERNARY_FALSE,
++                          klass->get_extra_rules,
++                          self,
++                          nm_device_get_netns(self));
+ 
+     if (ifindex > 0)
+         nm_platform_ip4_dev_route_blacklist_set(nm_device_get_platform(self), ifindex, NULL);
+@@ -16521,7 +16535,7 @@ nm_device_cleanup(NMDevice *self, NMDeviceStateReason reason, CleanupType cleanu
+             /* for other device states (UNAVAILABLE, DISCONNECTED), allow the
+              * device to overwrite the reset behavior, so that Wi-Fi can set
+              * a randomized MAC address used during scanning. */
+-            NM_DEVICE_GET_CLASS(self)->deactivate_reset_hw_addr(self);
++            klass->deactivate_reset_hw_addr(self);
+         }
+     }
+ 
+diff --git a/src/core/devices/nm-device.h b/src/core/devices/nm-device.h
+index 37eda5c0c8..c3a06c12e6 100644
+--- a/src/core/devices/nm-device.h
++++ b/src/core/devices/nm-device.h
+@@ -848,4 +848,10 @@ void nm_device_clear_dns_lookup_data(NMDevice *self, const char *reason);
+ 
+ gboolean nm_device_get_allow_autoconnect_on_external(NMDevice *self);
+ 
++void nm_routing_rules_sync(NMConnection *applied_connection,
++                           NMTernary     set_mode,
++                           GPtrArray *(*get_extra_rules)(NMDevice *self),
++                           NMDevice *self,
++                           NMNetns  *netns);
++
+ #endif /* __NETWORKMANAGER_DEVICE_H__ */
+diff --git a/src/core/vpn/nm-vpn-connection.c b/src/core/vpn/nm-vpn-connection.c
+index 88c5703a69..c14682b8cc 100644
+--- a/src/core/vpn/nm-vpn-connection.c
++++ b/src/core/vpn/nm-vpn-connection.c
+@@ -905,7 +905,8 @@ fw_call_cleanup(NMVpnConnection *self)
+ static void
+ vpn_cleanup(NMVpnConnection *self, NMDevice *parent_dev)
+ {
+-    const char *iface;
++    NMVpnConnectionPrivate *priv = NM_VPN_CONNECTION_GET_PRIVATE(self);
++    const char             *iface;
+ 
+     /* Remove zone from firewall */
+     iface = nm_vpn_connection_get_ip_iface(self, FALSE);
+@@ -917,6 +918,8 @@ vpn_cleanup(NMVpnConnection *self, NMDevice *parent_dev)
+     fw_call_cleanup(self);
+ 
+     _l3cfg_l3cd_clear_all(self);
++
++    nm_routing_rules_sync(_get_applied_connection(self), NM_TERNARY_FALSE, NULL, NULL, priv->netns);
+ }
+ 
+ static void
+@@ -2278,6 +2281,8 @@ _dbus_signal_ip_config_cb(NMVpnConnection *self, int addr_family, GVariant *dict
+ 
+     _l3cfg_l3cd_set(self, L3CD_TYPE_IP_X(IS_IPv4), l3cd);
+ 
++    nm_routing_rules_sync(_get_applied_connection(self), NM_TERNARY_TRUE, NULL, NULL, priv->netns);
++
+     _check_complete(self, TRUE);
+ }
+ 
+-- 
+2.45.0
+

@@ -6,7 +6,7 @@
 %global epoch_version 1
 %global real_version 1.48.10
 %global rpm_version %{real_version}
-%global release_version 3
+%global release_version 5
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -216,6 +216,9 @@ Patch1002: 1002-cloud-setup-ensure-azure-places-primary-address-first-rhel-56387
 Patch1003: 1003-only-validate-sriov-capability-when-enabled-rhel-58397.patch
 Patch1004: 1004-fix-bug-when-deactivating-port-connections-rhel-50747.patch
 Patch1005: 1005-fix-validation-of-ovs-dpdk-interface-name-rhel-60022.patch
+Patch1006: 1006-remove-routes-added-by-nm-on-reapply-rhel-73013.patch
+Patch1007: 1007-vpn-place-gateway-route-to-table-defined-in-ipvx-route-table-rhel-73166.patch
+Patch1008: 1008-vpn-support-routing-rules-in-vpn-conenctions-rhel-73167.patch
 
 Requires(post): systemd
 %if 0%{?fedora} || 0%{?rhel} >= 8
@@ -1272,6 +1275,13 @@ fi
 
 
 %changelog
+* Thu Jan 09 2025 Wen Liang <wenliang@redhat.com> - 1:1.48.10-5
+- vpn: Support routing rules in vpn conenctions (RHEL-73167)
+- vpn: Place gateway route to table defined in ipvx.route-table (RHEL-73166)
+
+* Wed Jan 08 2025 Íñigo Huguet <ihuguet@redhat.com> - 1:1.48.10-4
+- Remove routes added by NetworkManager when doing reapply, also those not in main table (RHEL-73013)
+
 * Tue Nov 12 2024 Beniamino Galvani <bgalvani@redhat.com> - 1:1.48.10-3
 - Only validate the SR-IOV device capability when SR-IOV is enabled (RHEL-58397)
 - Fix bug when deactivating port connections (RHEL-50747)
