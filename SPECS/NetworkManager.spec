@@ -6,7 +6,7 @@
 %global epoch_version 1
 %global real_version 1.40.16
 %global rpm_version %{real_version}
-%global release_version 18
+%global release_version 19
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -213,6 +213,7 @@ Patch1014: 1014-device-disable-IPv6-in-NetworkManager-when-disabled-rhel-10450.p
 Patch1015: 1015-use-etc-hosts-for-hostname-resolution-rhel-53200.patch
 Patch1016: 1016-vpn-place-gateway-route-to-table-defined-in-ipvx-route-table-rhel-73051.patch
 Patch1017: 1017-vpn-fix-routing-rules-support-in-vpn-conenctions-rhel-73052.patch
+Patch1018: 1018-cloud-setup-azure-ensure-that-primary-address-is-pla-rhel-69462.patch
 
 Requires(post): systemd
 %if 0%{?fedora} || 0%{?rhel} >= 8
@@ -1248,6 +1249,9 @@ fi
 
 
 %changelog
+* Fri Jan 17 2025 Fernando Fernandez Mancera <ferfern@redhat.com> - 1:1.40.16-19
+- cloud-setup: azure: ensure that primary address is placed first (RHEL-69462)
+
 * Tue Jan 07 2025 Wen Liang <wenliang@redhat.com> - 1:1.40.16-18
 - vpn: fix routing rules support in vpn conenctions (RHEL-73052)
 - vpn: Place gateway route to table defined in ipvx.route-table (RHEL-73051)
