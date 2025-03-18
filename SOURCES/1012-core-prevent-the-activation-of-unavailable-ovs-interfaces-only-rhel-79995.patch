@@ -1,0 +1,53 @@
+From 11d2ec5d62fe061bb25db2343a51d9aa4239fb53 Mon Sep 17 00:00:00 2001
+From: Fernando Fernandez Mancera <ffmancera@riseup.net>
+Date: Mon, 17 Feb 2025 23:10:53 +0100
+Subject: [PATCH] core: prevent the activation of unavailable OVS interfaces
+ only
+
+Preventing the activation of unavailable devices for all device types is
+too aggresive and leads to race conditions, e.g when a non-virtual bond
+port gets a carrier, preventing the device to be a good candidate for
+the connection.
+
+Instead, enforce this check only on OVS interfaces as NetworkManager
+just makes sure that ovsdb->ready is set to TRUE.
+
+https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/merge_requests/2139
+
+Fixes: 774badb1519a ('core: prevent the activation of unavailable devices')
+(cherry picked from commit a1c05d2ce6f115c900ef21b69c3ee7e98ef4ddaf)
+(cherry picked from commit b8ef2a551e505b5ffb02cc5d4e3ab29e78ea1fac)
+(cherry picked from commit 8b39a79621435e0ea3c7b4caaa69640f268409ae)
+(cherry picked from commit 67e71a9d7f110607838c5633db81eb2ed0ea6992)
+---
+ src/core/nm-manager.c | 14 ++++++++++----
+ 1 file changed, 10 insertions(+), 4 deletions(-)
+
+diff --git a/src/core/nm-manager.c b/src/core/nm-manager.c
+index 36b8bda0f5..cae3dff613 100644
+--- a/src/core/nm-manager.c
++++ b/src/core/nm-manager.c
+@@ -4699,10 +4699,16 @@ found_better:
+         if (nm_g_hash_table_contains(exclude_devices, device))
+             continue;
+ 
+-        if (!nm_device_is_available(device,
+-                                    for_user_request
+-                                        ? NM_DEVICE_CHECK_DEV_AVAILABLE_FOR_USER_REQUEST
+-                                        : NM_DEVICE_CHECK_DEV_AVAILABLE_NONE))
++        /* During startup, NM performs a cleanup of the ovsdb to remove previous entries.
++         * Before the device is suitable for the connection, it must have ovsdb->ready set
++         * to TRUE. Performing this check in all kind of interfaces is too agressive and leads
++         * to race conditions, e.g when a non-virtual bond port gets a carrier, preventing the
++         * device to be a good candidate for the connection. */
++        if (nm_device_get_device_type(device) == NM_DEVICE_TYPE_OVS_INTERFACE
++            && !nm_device_is_available(device,
++                                       for_user_request
++                                           ? NM_DEVICE_CHECK_DEV_AVAILABLE_FOR_USER_REQUEST
++                                           : NM_DEVICE_CHECK_DEV_AVAILABLE_NONE))
+             continue;
+ 
+         /* determine the priority of this device. Currently, this priority is independent
+-- 
+2.48.1
+

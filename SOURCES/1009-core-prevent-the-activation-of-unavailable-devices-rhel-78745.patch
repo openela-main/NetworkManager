@@ -1,0 +1,120 @@
+From a12b1dfdb0393687ae0fc505c57c76de2907209c Mon Sep 17 00:00:00 2001
+From: Beniamino Galvani <bgalvani@redhat.com>
+Date: Mon, 10 Feb 2025 15:15:18 +0100
+Subject: [PATCH 1/2] core: cleanup nm_manager_get_best_device_for_connection()
+
+Rename "unavailable_devices" to "exclude_devices", as the
+"unavailable" term has a specific, different meaning in NetworkManager
+(i.e. the device is in the UNAVAILABLE state). Also, use
+nm_g_hash_table_contains() when needed.
+
+(cherry picked from commit 6c1eb99d3258ac8cf969cb648a988565c205a205)
+(cherry picked from commit da866c4cda996b14d5ea8c3540c8ba0d5d798e9a)
+(cherry picked from commit 0045a0240cb64814126dc0f7adbcbaee9aca3b54)
+---
+ src/core/nm-manager.c | 10 ++++------
+ 1 file changed, 4 insertions(+), 6 deletions(-)
+
+diff --git a/src/core/nm-manager.c b/src/core/nm-manager.c
+index a673279712..cd79653078 100644
+--- a/src/core/nm-manager.c
++++ b/src/core/nm-manager.c
+@@ -4536,7 +4536,7 @@ nm_manager_get_best_device_for_connection(NMManager            *self,
+                                           NMSettingsConnection *sett_conn,
+                                           NMConnection         *connection,
+                                           gboolean              for_user_request,
+-                                          GHashTable           *unavailable_devices,
++                                          GHashTable           *exclude_devices,
+                                           GError              **error)
+ {
+     NMManagerPrivate       *priv = NM_MANAGER_GET_PRIVATE(self);
+@@ -4619,7 +4619,7 @@ nm_manager_get_best_device_for_connection(NMManager            *self,
+ 
+         ac_device = nm_active_connection_get_device(ac);
+         if (ac_device
+-            && ((unavailable_devices && g_hash_table_contains(unavailable_devices, ac_device))
++            && (nm_g_hash_table_contains(exclude_devices, ac_device)
+                 || !nm_device_check_connection_available(ac_device, connection, flags, NULL, NULL)))
+             ac_device = NULL;
+ 
+@@ -4635,9 +4635,7 @@ nm_manager_get_best_device_for_connection(NMManager            *self,
+                 NMDevice               *ac_device2 = nm_active_connection_get_device(ac2);
+                 NMActiveConnectionState ac_state2;
+ 
+-                if (!ac_device2
+-                    || (unavailable_devices
+-                        && g_hash_table_contains(unavailable_devices, ac_device2))
++                if (!ac_device2 || nm_g_hash_table_contains(exclude_devices, ac_device2)
+                     || !nm_device_check_connection_available(ac_device2,
+                                                              connection,
+                                                              flags,
+@@ -4698,7 +4696,7 @@ found_better:
+         GError              *local = NULL;
+         DeviceActivationPrio prio;
+ 
+-        if (unavailable_devices && g_hash_table_contains(unavailable_devices, device))
++        if (nm_g_hash_table_contains(exclude_devices, device))
+             continue;
+ 
+         /* determine the priority of this device. Currently, this priority is independent
+-- 
+2.48.1
+
+
+From 00a4e1cc0495e13ac72d0df82792654168e92781 Mon Sep 17 00:00:00 2001
+From: Beniamino Galvani <bgalvani@redhat.com>
+Date: Mon, 10 Feb 2025 15:27:43 +0100
+Subject: [PATCH 2/2] core: prevent the activation of unavailable devices
+
+When autoconnecting ports of a controller, we look for all candidate
+(device,connection) tuples through the following call trace:
+
+ -> autoconnect_ports()
+   -> find_ports()
+     -> nm_manager_get_best_device_for_connection()
+       -> nm_device_check_connection_available()
+         -> _nm_device_check_connection_available()
+
+The last function checks that a specific device is available to be
+activated with the given connection. For virtual devices, it only
+checks that the device is compatible with the connection based on the
+device type and characteristics, without considering any live network
+information.
+
+For OVS interfaces, this doesn't work as expected. During startup, NM
+performs a cleanup of the ovsdb to remove entries that were previously
+added by NM. When the cleanup is terminated, NMOvsdb sets the "ready"
+flag and is ready to start the activation of new OVS interfaces. With
+the current mechanism, it is possible that a OVS-interface connection
+gets activated via the autoconnect-ports mechanism without checking
+the "ready" flag.
+
+Fix that by also checking that the device is available for activation.
+
+(cherry picked from commit 774badb1519a76fb3b7c0f60cf46ee5ea25bce69)
+(cherry picked from commit f459c7fecce8445515d052b5b48f10d808e97fff)
+(cherry picked from commit b495d6bd55f4068596d380ce81614eb3d86943a3)
+---
+ src/core/nm-manager.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/src/core/nm-manager.c b/src/core/nm-manager.c
+index cd79653078..36b8bda0f5 100644
+--- a/src/core/nm-manager.c
++++ b/src/core/nm-manager.c
+@@ -4699,6 +4699,12 @@ found_better:
+         if (nm_g_hash_table_contains(exclude_devices, device))
+             continue;
+ 
++        if (!nm_device_is_available(device,
++                                    for_user_request
++                                        ? NM_DEVICE_CHECK_DEV_AVAILABLE_FOR_USER_REQUEST
++                                        : NM_DEVICE_CHECK_DEV_AVAILABLE_NONE))
++            continue;
++
+         /* determine the priority of this device. Currently, this priority is independent
+          * of the profile (connection) and the device's details (aside the state).
+          *
+-- 
+2.48.1
+

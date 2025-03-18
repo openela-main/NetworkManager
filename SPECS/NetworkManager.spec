@@ -6,7 +6,7 @@
 %global epoch_version 1
 %global real_version 1.48.10
 %global rpm_version %{real_version}
-%global release_version 5
+%global release_version 8
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -219,6 +219,10 @@ Patch1005: 1005-fix-validation-of-ovs-dpdk-interface-name-rhel-60022.patch
 Patch1006: 1006-remove-routes-added-by-nm-on-reapply-rhel-73013.patch
 Patch1007: 1007-vpn-place-gateway-route-to-table-defined-in-ipvx-route-table-rhel-73166.patch
 Patch1008: 1008-vpn-support-routing-rules-in-vpn-conenctions-rhel-73167.patch
+Patch1009: 1009-core-prevent-the-activation-of-unavailable-devices-rhel-78745.patch
+Patch1010: 1010-fix-nmtui-segfault-adding-veth-rhel-75763.patch
+Patch1011: 1011-policy-always-reset-retries-when-unblocking-children-or-ports-rhel-78748.patch
+Patch1012: 1012-core-prevent-the-activation-of-unavailable-ovs-interfaces-only-rhel-79995.patch
 
 Requires(post): systemd
 %if 0%{?fedora} || 0%{?rhel} >= 8
@@ -1275,6 +1279,16 @@ fi
 
 
 %changelog
+* Tue Feb 18 2025 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.48.10-8
+- policy: always reset retries when unblocking children or ports (RHEL-78748)
+- core: prevent the activation of unavailable OVS interfaces only (RHEL-79995)
+
+* Thu Feb 13 2025 Íñigo Huguet <ihuguet@redhat.com> - 1:1.48.10-7
+- nmtui: fix segfault when adding veth interface (RHEL-75763)
+
+* Wed Feb 12 2025 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.48.10-6
+- core: prevent the activation of unavailable devices (RHEL-77167)
+
 * Thu Jan 09 2025 Wen Liang <wenliang@redhat.com> - 1:1.48.10-5
 - vpn: Support routing rules in vpn conenctions (RHEL-73167)
 - vpn: Place gateway route to table defined in ipvx.route-table (RHEL-73166)
