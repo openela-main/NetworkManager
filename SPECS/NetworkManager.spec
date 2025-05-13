@@ -7,7 +7,7 @@
 %global real_version 1.52.0
 %global git_tag_version_suffix %{nil}
 %global rpm_version %{real_version}
-%global release_version 1
+%global release_version 3
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -190,6 +190,9 @@ Patch0001: 0001-revert-change-default-value-for-ipv4.dad-timeout-from-0-to-200ms
 
 # Bugfixes that are only relevant until next rebase of the package.
 # Patch1001: 1001-some.patch
+Patch1001: 1001-core-fail-early-if-we-cannot-get-current-FEC-value-86851.patch
+Patch1002: 1002-oci-update-disconnected-vnics-83198.patch
+Patch1003: 1003-dns-Fix-invalid-memory-access-on-Dnsconfd-DBUS-error-84692.patch
 
 Requires(post): systemd
 Requires(post): systemd-udev
@@ -1081,6 +1084,13 @@ fi
 
 
 %changelog
+* Fri Apr 11 2025 Vladimír Beneš <vbenes@redhat.com> - 1:1.52.0-3
+- Invalid memory access on Dnsconfd DBUS error (RHEL-84692)
+- Support IP configuration for secondary interfaces on Oracle VM from metadata (RHEL-84695)
+
+* Wed Apr 09 2025 Wen Liang <wenliang@redhat.com> - 1:1.52.0-2
+- core: fail early if we cannot get current FEC value (RHEL-86851)
+
 * Mon Mar 03 2025 Íñigo Huguet <ihuguet@redhat.com> - 1:1.52.0-1
 - Update to 1.52.0
 - Add support for creating VLANs for secondary VNICs in nm-cloud-setup (RHEL-36423)
