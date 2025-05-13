@@ -4,9 +4,10 @@
 %global glib2_version %(pkg-config --modversion glib-2.0 2>/dev/null || echo bad)
 
 %global epoch_version 1
-%global real_version 1.48.10
+%global real_version 1.52.0
+%global git_tag_version_suffix %{nil}
 %global rpm_version %{real_version}
-%global release_version 8
+%global release_version 1
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -39,12 +40,19 @@
 %global systemd_units_cloud_setup nm-cloud-setup.service nm-cloud-setup.timer
 
 ###############################################################################
-
-%bcond_with meson
+%if 0%{?fedora} > 40 || 0%{?rhel} >= 10
+%bcond_with dhclient
+%else
+%bcond_without dhclient
+%endif
 %bcond_without adsl
 %bcond_without bluetooth
 %bcond_without wwan
+%if 0%{?rhel} >= 10
+%bcond_with team
+%else
 %bcond_without team
+%endif
 %bcond_without wifi
 %bcond_without ovs
 %bcond_without ppp
@@ -62,7 +70,7 @@
 %bcond_with    test
 %endif
 %if "%{?bcond_default_lto}" == ""
-%if 0%{?fedora} >= 33 || 0%{?rhel} >= 9
+%if 0%{?fedora} || 0%{?rhel} >= 9
 %bcond_without lto
 %else
 %bcond_with    lto
@@ -80,44 +88,21 @@
 %else
 %bcond_with connectivity_fedora
 %endif
-%if 0%{?rhel} && 0%{?rhel} >= 8
+%if 0%{?rhel}
 %bcond_without connectivity_redhat
 %else
 %bcond_with connectivity_redhat
-%endif
-%if 0%{?fedora} >= 29 || 0%{?rhel} >= 8
-%bcond_without crypto_gnutls
-%else
-%bcond_with crypto_gnutls
 %endif
 %if 0%{?rhel}
 %bcond_with iwd
 %else
 %bcond_without iwd
 %endif
-%if 0%{?fedora} >= 32 || 0%{?rhel} >= 8
-%bcond_without firewalld_zone
-%else
-%bcond_with firewalld_zone
-%endif
 
 ###############################################################################
 
-%if 0%{?fedora} || 0%{?rhel} >= 8
 %global dbus_version 1.9.18
 %global dbus_sys_dir %{_datadir}/dbus-1/system.d
-%else
-%global dbus_version 1.1
-%global dbus_sys_dir %{_sysconfdir}/dbus-1/system.d
-%endif
-
-# Older libndp versions use select() (rh#1933041). On well known distros,
-# choose a version that has the necessary fix.
-%if 0%{?rhel} && 0%{?rhel} == 8
-%global libndp_version 1.7-4
-%else
-%global libndp_version %{nil}
-%endif
 
 %if %{with bluetooth} || %{with wwan}
 %global with_modem_manager_1 1
@@ -125,46 +110,39 @@
 %global with_modem_manager_1 0
 %endif
 
-%if 0%{?fedora} >= 31 || 0%{?rhel} >= 8
-%global dhcp_default internal
-%else
-%global dhcp_default dhclient
-%endif
-
-%if 0%{?fedora} || 0%{?rhel} >= 8
-%global logging_backend_default journal
 %if 0%{?fedora} || 0%{?rhel} >= 9
 %global dns_rc_manager_default auto
 %else
 %global dns_rc_manager_default symlink
 %endif
-%else
-%global logging_backend_default syslog
-%global dns_rc_manager_default file
-%endif
 
 %if 0%{?fedora} >= 33 || 0%{?rhel} >= 9
-%global config_plugins_default_ifcfg_rh 0
+%bcond_with default_ifcfg_rh
 %else
-%global config_plugins_default_ifcfg_rh 1
+%bcond_without default_ifcfg_rh
 %endif
 
-%if 0%{?fedora} >= 36 || 0%{?rhel} >= 10
-%global split_ifcfg_rh 1
+%if 0%{?rhel} >= 10 || 0%{?fedora} >= 41
+%bcond_with ifcfg_rh
+%bcond_with split_ifcfg_rh
+%elif 0%{?fedora} >= 36
+%bcond_without ifcfg_rh
+%bcond_without split_ifcfg_rh
 %else
-%global split_ifcfg_rh 0
+%bcond_without ifcfg_rh
+%bcond_with split_ifcfg_rh
 %endif
 
-%if (0%{?fedora} >= 36 && 0%{?fedora} < 39) || 0%{?rhel} >= 9
-%global ifcfg_warning 1
+%if (0%{?fedora} >= 36 && 0%{?fedora} < 39) || 0%{?rhel} == 9
+%bcond_without ifcfg_warning
 %else
-%global ifcfg_warning 0
+%bcond_with ifcfg_warning
 %endif
 
-%if 0%{?fedora} >= 39
-%global ifcfg_migrate 1
+%if %{with ifcfg_rh} && 0%{?fedora} >= 39
+%bcond_without ifcfg_migrate
 %else
-%global ifcfg_migrate 0
+%bcond_with ifcfg_migrate
 %endif
 
 %if 0%{?fedora}
@@ -194,7 +172,7 @@ Group: System Environment/Base
 License: GPL-2.0-or-later AND LGPL-2.1-or-later
 URL: https://networkmanager.dev/
 
-Source: https://download.gnome.org/sources/NetworkManager/%{real_version_major}/%{name}-%{real_version}.tar.xz
+Source: https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/releases/%{real_version}%{git_tag_version_suffix}/downloads/%{name}-%{real_version}.tar.xz
 Source1: NetworkManager.conf
 Source2: 00-server.conf
 Source4: 20-connectivity-fedora.conf
@@ -211,23 +189,10 @@ Source9: readme-ifcfg-rh-migrated.txt
 Patch0001: 0001-revert-change-default-value-for-ipv4.dad-timeout-from-0-to-200ms.patch
 
 # Bugfixes that are only relevant until next rebase of the package.
-Patch1001: 1001-cloud-setup-allow-bigger-restart-bursts-rhel-56740.patch
-Patch1002: 1002-cloud-setup-ensure-azure-places-primary-address-first-rhel-56387.patch
-Patch1003: 1003-only-validate-sriov-capability-when-enabled-rhel-58397.patch
-Patch1004: 1004-fix-bug-when-deactivating-port-connections-rhel-50747.patch
-Patch1005: 1005-fix-validation-of-ovs-dpdk-interface-name-rhel-60022.patch
-Patch1006: 1006-remove-routes-added-by-nm-on-reapply-rhel-73013.patch
-Patch1007: 1007-vpn-place-gateway-route-to-table-defined-in-ipvx-route-table-rhel-73166.patch
-Patch1008: 1008-vpn-support-routing-rules-in-vpn-conenctions-rhel-73167.patch
-Patch1009: 1009-core-prevent-the-activation-of-unavailable-devices-rhel-78745.patch
-Patch1010: 1010-fix-nmtui-segfault-adding-veth-rhel-75763.patch
-Patch1011: 1011-policy-always-reset-retries-when-unblocking-children-or-ports-rhel-78748.patch
-Patch1012: 1012-core-prevent-the-activation-of-unavailable-ovs-interfaces-only-rhel-79995.patch
+# Patch1001: 1001-some.patch
 
 Requires(post): systemd
-%if 0%{?fedora} || 0%{?rhel} >= 8
 Requires(post): systemd-udev
-%endif
 Requires(post): /usr/sbin/update-alternatives
 Requires(preun): systemd
 Requires(preun): /usr/sbin/update-alternatives
@@ -236,23 +201,40 @@ Requires(postun): systemd
 Requires: dbus >= %{dbus_version}
 Requires: glib2 >= %{glib2_version}
 Requires: %{name}-libnm%{?_isa} = %{epoch}:%{version}-%{release}
-%if "%{libndp_version}" != ""
-Requires: libndp >= %{libndp_version}
+
+Recommends: iputils
+
+%if 0%{?rhel} == 8
+# Older libndp versions use select() (rh#1933041). On well known distros,
+# choose a version that has the necessary fix.
+Requires: libndp >= 1.7-4
 %endif
+
 Obsoletes: NetworkManager < %{obsoletes_device_plugins}
 Obsoletes: NetworkManager < %{obsoletes_ppp_plugin}
 Obsoletes: NetworkManager-wimax < 1:1.2
-%if 0%{?rhel} && 0%{?rhel} == 8
+%if 0%{?rhel} == 8
 Suggests: NetworkManager-initscripts-updown
 %endif
 Obsoletes: NetworkManager < %{obsoletes_initscripts_updown}
-%if 0%{?split_ifcfg_rh}
+%if %{with split_ifcfg_rh}
 Obsoletes: NetworkManager < %{obsoletes_ifcfg_rh}
 %endif
 
-%if 0%{?rhel} && 0%{?rhel} <= 7
-# Kept for RHEL to ensure that wired 802.1x works out of the box
-Requires: wpa_supplicant >= 1:1.1
+%if 0%{?rhel} >= 10
+%if 0%{without team}
+Obsoletes: NetworkManager-team < 1:1.47.5-3
+%endif
+Obsoletes: NetworkManager-initscripts-ifcfg-rh < 1:1.47.5-3
+Obsoletes: NetworkManager-dispatcher-routing-rules < 1:1.47.5-3
+%endif
+
+%if 0%{?fedora} >= 41
+%if %{without ifcfg_rh}
+Obsoletes: NetworkManager-initscripts-ifcfg-rh < 1:1.49-3.1
+Obsoletes: NetworkManager-dispatcher-routing-rules < 1:1.49.3-1
+Obsoletes: NetworkManager-initscripts-updown < 1:1.49.3-1
+%endif
 %endif
 
 Conflicts: NetworkManager-vpnc < 1:0.7.0.99-1
@@ -260,17 +242,18 @@ Conflicts: NetworkManager-openvpn < 1:0.7.0.99-1
 Conflicts: NetworkManager-pptp < 1:0.7.0.99-1
 Conflicts: NetworkManager-openconnect < 0:0.7.0.99-1
 Conflicts: kde-plasma-networkmanagement < 1:0.9-0.49.20110527git.nm09
+%if 0%{?rhel} >= 10
+%if 0%{without team}
+Conflicts: NetworkManager-team <= 1:1.47.5-3
+%endif
+Conflicts: NetworkManager-initscripts-ifcfg-rh <= 1:1.47.5-3
+Conflicts: NetworkManager-dispatcher-routing-rules <= 1:1.47.5-3
+%endif
 
-BuildRequires: make
 BuildRequires: gcc
 BuildRequires: libtool
 BuildRequires: pkgconfig
-%if %{with meson}
 BuildRequires: meson
-%else
-BuildRequires: automake
-BuildRequires: autoconf
-%endif
 BuildRequires: gettext-devel >= 0.19.8
 
 BuildRequires: dbus-devel >= %{dbus_version}
@@ -279,11 +262,7 @@ BuildRequires: gobject-introspection-devel >= 0.10.3
 %if %{with ppp}
 BuildRequires: ppp-devel >= 2.4.5
 %endif
-%if %{with crypto_gnutls}
 BuildRequires: gnutls-devel >= 2.12
-%else
-BuildRequires: nss-devel >= 3.11.7
-%endif
 BuildRequires: readline-devel
 BuildRequires: audit-libs-devel
 %if %{with regen_docs}
@@ -321,17 +300,11 @@ BuildRequires: polkit-devel
 BuildRequires: jansson-devel
 %if %{with sanitizer}
 BuildRequires: libasan
-%if 0%{?fedora} || 0%{?rhel} >= 8
 BuildRequires: libubsan
 %endif
-%endif
-%if %{with firewalld_zone}
 BuildRequires: firewalld-filesystem
-%endif
 BuildRequires: iproute
-%if 0%{?fedora} || 0%{?rhel} >= 8
 BuildRequires: iproute-tc
-%endif
 
 Provides: %{name}-dispatcher%{?_isa} = %{epoch}:%{version}-%{release}
 
@@ -374,12 +347,7 @@ Summary: Bluetooth device plugin for NetworkManager
 Group: System Environment/Base
 Requires: %{name}%{?_isa} = %{epoch}:%{version}-%{release}
 Requires: NetworkManager-wwan = %{epoch}:%{version}-%{release}
-%if 0%{?rhel} && 0%{?rhel} <= 7
-# No Requires:bluez to prevent it being installed when updating
-# to the split NM package
-%else
 Requires: bluez >= 4.101-5
-%endif
 Obsoletes: NetworkManager < %{obsoletes_device_plugins}
 
 %description bluetooth
@@ -394,12 +362,10 @@ Group: System Environment/Base
 BuildRequires: teamd-devel
 Requires: %{name}%{?_isa} = %{epoch}:%{version}-%{release}
 Obsoletes: NetworkManager < %{obsoletes_device_plugins}
-%if 0%{?fedora} || 0%{?rhel} >= 8
 # Team was split from main NM binary between 0.9.10 and 1.0
 # We need this Obsoletes in addition to the one above
 # (git:3aede801521ef7bff039e6e3f1b3c7b566b4338d).
 Obsoletes: NetworkManager < 1:1.0.0
-%endif
 
 %description team
 This package contains NetworkManager support for team devices.
@@ -418,13 +384,10 @@ Requires: wireless-regdb
 Requires: crda
 %endif
 
-%if %{with iwd} && (0%{?fedora} >= 25 || 0%{?rhel} >= 8)
+%if %{with iwd}
 Requires: (wpa_supplicant >= %{wpa_supplicant_version} or iwd)
 Suggests: wpa_supplicant
 %else
-# Just require wpa_supplicant on platforms that don't support boolean
-# dependencies even though the plugin supports both supplicant and
-# iwd backend.
 Requires: wpa_supplicant >= %{wpa_supplicant_version}
 %endif
 
@@ -440,12 +403,7 @@ This package contains NetworkManager support for Wifi and OLPC devices.
 Summary: Mobile broadband device plugin for NetworkManager
 Group: System Environment/Base
 Requires: %{name}%{?_isa} = %{epoch}:%{version}-%{release}
-%if 0%{?rhel} && 0%{?rhel} <= 7
-# No Requires:ModemManager to prevent it being installed when updating
-# to the split NM package
-%else
 Requires: ModemManager
-%endif
 Obsoletes: NetworkManager < %{obsoletes_device_plugins}
 
 %description wwan
@@ -548,10 +506,11 @@ This package is intended to be installed by default for server
 deployments.
 
 
+%if %{with ifcfg_rh}
 %package dispatcher-routing-rules
 Summary: NetworkManager dispatcher file for advanced routing rules
 Group: System Environment/Base
-%if 0%{?split_ifcfg_rh}
+%if %{with split_ifcfg_rh}
 Requires: %{name}-initscripts-ifcfg-rh
 %endif
 Requires: ipcalc
@@ -563,6 +522,7 @@ Obsoletes: %{name}-config-routing-rules < 1:1.31.0
 This adds a NetworkManager dispatcher file to support networking
 configurations using "/etc/sysconfig/network-scripts/rule-NAME" files
 (eg, to do policy-based routing).
+%endif
 
 
 %if %{with nmtui}
@@ -579,7 +539,7 @@ by nm-connection-editor and nm-applet in a non-graphical environment.
 %endif
 
 
-%if 0%{?split_ifcfg_rh}
+%if %{with split_ifcfg_rh}
 %package initscripts-ifcfg-rh
 Summary: NetworkManager plugin for reading and writing connections in ifcfg-rh format
 Group: System Environment/Base
@@ -606,6 +566,7 @@ like Aliyun, Azure, EC2, GCP are supported.
 %endif
 
 
+%if %{with ifcfg_rh}
 %package initscripts-updown
 Summary: Legacy ifup/ifdown scripts for NetworkManager that replace initscripts (network-scripts)
 Group: System Environment/Base
@@ -618,6 +579,7 @@ Obsoletes: NetworkManager < %{obsoletes_initscripts_updown}
 Installs alternative ifup/ifdown scripts that talk to NetworkManager.
 This is only for backward compatibility with initscripts (network-scripts).
 Preferably use nmcli instead.
+%endif
 
 
 %prep
@@ -625,7 +587,6 @@ Preferably use nmcli instead.
 
 
 %build
-%if %{with meson}
 %meson \
 	-Db_ndebug=false \
 	--warnlevel 2 \
@@ -634,15 +595,13 @@ Preferably use nmcli instead.
 %endif
 	-Dnft=%{_sbindir}/nft \
 	-Diptables=%{_sbindir}/iptables \
+%if %{with dhclient}
 	-Ddhclient=%{_sbindir}/dhclient \
-	-Ddhcpcanon=no \
-	-Ddhcpcd=no \
-	-Dconfig_dhcp_default=%{dhcp_default} \
-%if %{with crypto_gnutls}
-	-Dcrypto=gnutls \
 %else
-	-Dcrypto=nss \
+	-Ddhclient=no \
 %endif
+	-Ddhcpcd=no \
+	-Dcrypto=gnutls \
 %if %{with debug}
 	-Dmore_logging=true \
 	-Dmore_asserts=10000 \
@@ -732,7 +691,11 @@ Preferably use nmcli instead.
 	-Ddbus_conf_dir=%{dbus_sys_dir} \
 	-Dtests=yes \
 	-Dvalgrind=no \
+%if %{with ifcfg_rh}
 	-Difcfg_rh=true \
+%else
+	-Difcfg_rh=false \
+%endif
 	-Difupdown=false \
 %if %{with ppp}
 	-Dppp=true \
@@ -741,182 +704,29 @@ Preferably use nmcli instead.
 %else
 	-Dppp=false \
 %endif
-%if %{with firewalld_zone}
-	-Dfirewalld_zone=true \
-%else
-	-Dfirewalld_zone=false \
-%endif
 	-Ddist_version=%{version}-%{release} \
-%if %{?config_plugins_default_ifcfg_rh}
+%if %{with default_ifcfg_rh}
 	-Dconfig_plugins_default=ifcfg-rh \
 %endif
-%if %{?ifcfg_migrate}
+%if %{with ifcfg_migrate}
 	-Dconfig_migrate_ifcfg_rh_default=true \
 %endif
 	-Dresolvconf=no \
 	-Dnetconfig=no \
 	-Dconfig_dns_rc_manager_default=%{dns_rc_manager_default} \
-	-Dconfig_logging_backend_default=%{logging_backend_default}
+	-Dconfig_logging_backend_default=journal
 
-%meson_build
+# Limit number of jobs on ppc64 to prevent high RAM usage
+%ifarch ppc64le
+%global numjobs 4
+%else
+%global numjobs %{_smp_build_ncpus}
+%endif
 
-%else
-# autotools
-%if %{with regen_docs}
-gtkdocize
-%endif
-autoreconf --install --force
-%configure \
-	--with-runstatedir=%{_rundir} \
-	--enable-silent-rules=no \
-	--enable-static=no \
-	--with-nft=%{_sbindir}/nft \
-	--with-iptables=%{_sbindir}/iptables \
-	--with-dhclient=%{_sbindir}/dhclient \
-	--with-dhcpcd=no \
-	--with-dhcpcanon=no \
-	--with-config-dhcp-default=%{dhcp_default} \
-%if %{with crypto_gnutls}
-	--with-crypto=gnutls \
-%else
-	--with-crypto=nss \
-%endif
-%if %{with sanitizer}
-	--with-address-sanitizer=exec \
-%if 0%{?fedora} || 0%{?rhel} >= 8
-	--enable-undefined-sanitizer=yes \
-%else
-	--enable-undefined-sanitizer=no \
-%endif
-%else
-	--with-address-sanitizer=no \
-	--enable-undefined-sanitizer=no \
-%endif
-%if %{with debug}
-	--enable-more-logging=yes \
-	--with-more-asserts=10000 \
-%else
-	--enable-more-logging=no \
-	--with-more-asserts=0 \
-%endif
-	--enable-ld-gc=yes \
-%if %{with lto}
-	--enable-lto=yes \
-%else
-	--enable-lto=no \
-%endif
-	--with-libaudit=yes-disabled-by-default \
-%if 0%{?with_modem_manager_1}
-	--with-modem-manager-1=yes \
-%else
-	--with-modem-manager-1=no \
-%endif
-%if %{with wifi}
-	--enable-wifi=yes \
-%if 0%{?fedora}
-	--with-wext=yes \
-%else
-	--with-wext=no \
-%endif
-%else
-	--enable-wifi=no \
-%endif
-%if %{with iwd}
-	--with-iwd=yes \
-%else
-	--with-iwd=no \
-%endif
-%if %{with bluetooth}
-	--enable-bluez5-dun=yes \
-%else
-	--enable-bluez5-dun=no \
-%endif
-%if %{with nmtui}
-	--with-nmtui=yes \
-%else
-	--with-nmtui=no \
-%endif
-%if %{with nm_cloud_setup}
-	--with-nm-cloud-setup=yes \
-%else
-	--with-nm-cloud-setup=no \
-%endif
-	--enable-vala=yes \
-	--enable-introspection=yes \
-%if %{with regen_docs}
-	--enable-gtk-doc=yes \
-%else
-	--enable-gtk-doc=no \
-%endif
-%if %{with team}
-	--enable-teamdctl=yes \
-%else
-	--enable-teamdctl=no \
-%endif
-%if %{with ovs}
-	--enable-ovs=yes \
-%else
-	--enable-ovs=no \
-%endif
-	--with-selinux=yes \
-	--enable-polkit=yes \
-	--enable-modify-system=yes \
-	--enable-concheck=yes \
-%if 0%{?fedora}
-	--with-libpsl=yes \
-%else
-	--with-libpsl=no \
-%endif
-	--with-ebpf=%{ebpf_enabled} \
-	--with-session-tracking=systemd \
-	--with-suspend-resume=systemd \
-	--with-systemdsystemunitdir=%{_unitdir} \
-	--with-system-ca-path=/etc/pki/tls/cert.pem \
-	--with-dbus-sys-dir=%{dbus_sys_dir} \
-	--with-tests=yes \
-%if %{with test}
-	--enable-more-warnings=error \
-%else
-	--enable-more-warnings=yes \
-%endif
-	--with-valgrind=no \
-	--enable-ifcfg-rh=yes \
-	--enable-ifupdown=no \
-%if %{with ppp}
-	--enable-ppp=yes \
-	--with-pppd="%{_sbindir}/pppd" \
-	--with-pppd-plugin-dir="%{_libdir}/pppd/%{ppp_version}" \
-%else
-	--enable-ppp=no \
-%endif
-%if %{with firewalld_zone}
-	--enable-firewalld-zone=yes \
-%else
-	--enable-firewalld-zone=no \
-%endif
-	--with-dist-version=%{version}-%{release} \
-%if %{?config_plugins_default_ifcfg_rh}
-	--with-config-plugins-default=ifcfg-rh \
-%endif
-%if %{?ifcfg_migrate}
-	--with-config-migrate-ifcfg-rh-default=yes \
-%endif
-	--with-resolvconf=no \
-	--with-netconfig=no \
-	--with-config-dns-rc-manager-default=%{dns_rc_manager_default} \
-	--with-config-logging-backend-default=%{logging_backend_default} \
-	--disable-autotools-deprecation
-
-%make_build
-
-%endif
+%meson_build -j %{numjobs}
 
 %install
-%if %{with meson}
 %meson_install
-%else
-%make_install
-%endif
 
 cp %{SOURCE1} %{buildroot}%{_sysconfdir}/%{name}/
 
@@ -936,16 +746,18 @@ cp %{SOURCE7} %{buildroot}%{_sysctldir}
 cp %{SOURCE6} %{buildroot}%{nmlibdir}/conf.d/
 %endif
 
-%if 0%{?ifcfg_warning}
+%if %{with ifcfg_warning}
 cp %{SOURCE8} %{buildroot}%{_sysconfdir}/sysconfig/network-scripts
 %endif
-%if 0%{?ifcfg_migrate}
+%if %{with ifcfg_migrate}
 cp %{SOURCE9} %{buildroot}%{_sysconfdir}/sysconfig/network-scripts/readme-ifcfg-rh.txt
 %endif
 
+%if %{with ifcfg_rh}
 cp examples/dispatcher/10-ifcfg-rh-routes.sh %{buildroot}%{nmlibdir}/dispatcher.d/
 ln -s ../no-wait.d/10-ifcfg-rh-routes.sh %{buildroot}%{nmlibdir}/dispatcher.d/pre-up.d/
 ln -s ../10-ifcfg-rh-routes.sh %{buildroot}%{nmlibdir}/dispatcher.d/no-wait.d/
+%endif
 
 %find_lang %{name}
 
@@ -954,33 +766,25 @@ rm -f %{buildroot}%{_libdir}/pppd/%{ppp_version}/*.la
 rm -f %{buildroot}%{nmplugindir}/*.la
 
 # Ensure the documentation timestamps are constant to avoid multilib conflicts
-find %{buildroot}%{_datadir}/gtk-doc -exec touch --reference configure.ac '{}' \+
+find %{buildroot}%{_datadir}/gtk-doc -exec touch --reference meson.build '{}' \+
 
 %if 0%{?__debug_package} && ! 0%{?flatpak}
 mkdir -p %{buildroot}%{_prefix}/src/debug/NetworkManager-%{real_version}
 cp valgrind.suppressions %{buildroot}%{_prefix}/src/debug/NetworkManager-%{real_version}
 %endif
 
+%if %{with ifcfg_rh}
 touch %{buildroot}%{_sbindir}/ifup
 touch %{buildroot}%{_sbindir}/ifdown
+%endif
 
 
 %check
-%if %{with meson}
 %if %{with test}
 %meson_test
 %else
 %ninja_test -C %{_vpath_builddir} || :
 %endif
-%else
-# autotools
-%if %{with test}
-make -k %{?_smp_mflags} check
-%else
-make -k %{?_smp_mflags} check || :
-%endif
-%endif
-
 
 %pre
 if [ -f "%{_unitdir}/network-online.target.wants/NetworkManager-wait-online.service" ] ; then
@@ -999,13 +803,12 @@ if [ -S /run/udev/control ]; then
     /usr/bin/udevadm control --reload-rules || :
     /usr/bin/udevadm trigger --subsystem-match=net || :
 fi
-%if %{with firewalld_zone}
 %firewalld_reload
-%endif
 
 %systemd_post %{systemd_units}
 
 
+%if %{with ifcfg_rh}
 %post initscripts-updown
 if [ -f %{_sbindir}/ifup -a ! -L %{_sbindir}/ifup ]; then
     # initscripts package too old, won't let us set an alternative
@@ -1014,6 +817,7 @@ else
     /usr/sbin/update-alternatives --install %{_sbindir}/ifup ifup %{_libexecdir}/nm-ifup 50 \
         --slave %{_sbindir}/ifdown ifdown %{_libexecdir}/nm-ifdown
 fi
+%endif
 
 
 %if %{with nm_cloud_setup}
@@ -1033,10 +837,12 @@ fi
 %systemd_preun NetworkManager-wait-online.service NetworkManager-dispatcher.service nm-priv-helper.service
 
 
+%if %{with ifcfg_rh}
 %preun initscripts-updown
 if [ $1 -eq 0 ]; then
     /usr/sbin/update-alternatives --remove ifup %{_libexecdir}/nm-ifup >/dev/null 2>&1 || :
 fi
+%endif
 
 
 %if %{with nm_cloud_setup}
@@ -1048,17 +854,9 @@ fi
 %postun
 /usr/bin/udevadm control --reload-rules || :
 /usr/bin/udevadm trigger --subsystem-match=net || :
-%if %{with firewalld_zone}
 %firewalld_reload
-%endif
 
 %systemd_postun %{systemd_units}
-
-
-%if (0%{?fedora} && 0%{?fedora} < 28) || 0%{?rhel}
-%post   libnm -p /sbin/ldconfig
-%postun libnm -p /sbin/ldconfig
-%endif
 
 
 %if %{with nm_cloud_setup}
@@ -1071,7 +869,7 @@ fi
 %{dbus_sys_dir}/org.freedesktop.NetworkManager.conf
 %{dbus_sys_dir}/nm-dispatcher.conf
 %{dbus_sys_dir}/nm-priv-helper.conf
-%if 0%{?split_ifcfg_rh} == 0
+%if %{with ifcfg_rh} && %{without split_ifcfg_rh}
 %{dbus_sys_dir}/nm-ifcfg-rh.conf
 %endif
 %{_sbindir}/%{name}
@@ -1099,7 +897,7 @@ fi
 %{_libexecdir}/nm-priv-helper
 %dir %{_libdir}/%{name}
 %dir %{nmplugindir}
-%if 0%{?split_ifcfg_rh} == 0
+%if %{with ifcfg_rh} && %{without split_ifcfg_rh}
 %{nmplugindir}/libnm-settings-plugin-ifcfg-rh.so
 %endif
 %if %{with nmtui}
@@ -1121,14 +919,14 @@ fi
 %{_mandir}/man8/NetworkManager-dispatcher.8*
 %{_mandir}/man8/NetworkManager-wait-online.service.8*
 %dir %{_localstatedir}/lib/NetworkManager
+%if %{with ifcfg_rh}
 %dir %{_sysconfdir}/sysconfig/network-scripts
+%endif
 %{_datadir}/dbus-1/system-services/org.freedesktop.nm_dispatcher.service
 %{_datadir}/dbus-1/system-services/org.freedesktop.nm_priv_helper.service
 %{_datadir}/polkit-1/actions/*.policy
 %{_prefix}/lib/udev/rules.d/*.rules
-%if %{with firewalld_zone}
 %{_prefix}/lib/firewalld/zones/nm-shared.xml
-%endif
 # systemd stuff
 %{_unitdir}/NetworkManager.service
 %{_unitdir}/NetworkManager-wait-online.service
@@ -1136,7 +934,7 @@ fi
 %{_unitdir}/nm-priv-helper.service
 %dir %{_datadir}/doc/NetworkManager/examples
 %{_datadir}/doc/NetworkManager/examples/server.conf
-%if 0%{?ifcfg_warning} || 0%{?ifcfg_migrate}
+%if %{with ifcfg_warning} || %{with ifcfg_migrate}
 %{_sysconfdir}/sysconfig/network-scripts/readme-ifcfg-rh.txt
 %endif
 %doc NEWS AUTHORS README.md CONTRIBUTING.md
@@ -1236,10 +1034,12 @@ fi
 %{nmlibdir}/conf.d/00-server.conf
 
 
+%if %{with ifcfg_rh}
 %files dispatcher-routing-rules
 %{nmlibdir}/dispatcher.d/10-ifcfg-rh-routes.sh
 %{nmlibdir}/dispatcher.d/no-wait.d/10-ifcfg-rh-routes.sh
 %{nmlibdir}/dispatcher.d/pre-up.d/10-ifcfg-rh-routes.sh
+%endif
 
 
 %if %{with nmtui}
@@ -1252,7 +1052,7 @@ fi
 %endif
 
 
-%if 0%{?split_ifcfg_rh}
+%if %{with split_ifcfg_rh}
 %files initscripts-ifcfg-rh
 %{nmplugindir}/libnm-settings-plugin-ifcfg-rh.so
 %{dbus_sys_dir}/nm-ifcfg-rh.conf
@@ -1271,39 +1071,91 @@ fi
 %endif
 
 
+%if %{with ifcfg_rh}
 %files initscripts-updown
 %{_libexecdir}/nm-ifup
 %ghost %attr(755, root, root) %{_sbindir}/ifup
 %{_libexecdir}/nm-ifdown
 %ghost %attr(755, root, root) %{_sbindir}/ifdown
+%endif
 
 
 %changelog
-* Tue Feb 18 2025 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.48.10-8
-- policy: always reset retries when unblocking children or ports (RHEL-78748)
-- core: prevent the activation of unavailable OVS interfaces only (RHEL-79995)
+* Mon Mar 03 2025 Íñigo Huguet <ihuguet@redhat.com> - 1:1.52.0-1
+- Update to 1.52.0
+- Add support for creating VLANs for secondary VNICs in nm-cloud-setup (RHEL-36423)
+- Always reset retries when unblocking children or ports (RHEL-78122)
+- Prevent the activation of unavailable OVS interfaces (RHEL-79997)
 
-* Thu Feb 13 2025 Íñigo Huguet <ihuguet@redhat.com> - 1:1.48.10-7
-- nmtui: fix segfault when adding veth interface (RHEL-75763)
+* Mon Fed 17 2025 Beniamino Galvani <bgalvani@redhat.com> - 1:1.51.90-2
+- Fix state handling in the dnsconfd DNS plugin (RHEL-79693)
 
-* Wed Feb 12 2025 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.48.10-6
-- core: prevent the activation of unavailable devices (RHEL-77167)
+* Wed Feb 12 2025 Filip Pokryvka <fpokryvk@redhat.com> - 1:1.51.90-1
+- Fix balance-slb ports rarely not being active after reboot (RHEL-77167)
 
-* Thu Jan 09 2025 Wen Liang <wenliang@redhat.com> - 1:1.48.10-5
-- vpn: Support routing rules in vpn conenctions (RHEL-73167)
-- vpn: Place gateway route to table defined in ipvx.route-table (RHEL-73166)
+* Mon Feb 10 2025 Íñigo Huguet <ihuguet@redhat.com> - 1:1.51.7-2
+- Remove the build argument -flto-partition to avoid compilation crashes due
+  to high memory usage.
 
-* Wed Jan 08 2025 Íñigo Huguet <ihuguet@redhat.com> - 1:1.48.10-4
-- Remove routes added by NetworkManager when doing reapply, also those not in main table (RHEL-73013)
+* Fri Feb 07 2025 Vladimír Beneš <vbenes@redhat.com> - 1:1.51.7-1
+- Update to 1.51.7 (dev)
+- Add support in initramfs generator for parsing NM eDNS configuration (RHEL-70420)
+- Add new dnsconfd DNS backend (RHEL-67917)
 
-* Tue Nov 12 2024 Beniamino Galvani <bgalvani@redhat.com> - 1:1.48.10-3
-- Only validate the SR-IOV device capability when SR-IOV is enabled (RHEL-58397)
-- Fix bug when deactivating port connections (RHEL-50747)
-- Fix validation of ovs-dpdk interface name (RHEL-60022)
+* Mon Jan 20 2025 Beniamino Galvani <bgalvani@redhat.com> - 1:1.51.6-1
+- Update to 1.51.6 (dev)
+- Honor the routing-rules property for VPN connections (RHEL-69899)
+- Fix potential crash when ipv4.dhcp-send-release is enabled (RHEL-67918)
+- Support encrypted DNS servers (RHEL-66260)
+- Fix configuration of VLAN ingress/egress QoS mapping (RHEL-72475)
 
-* Fri Aug 30 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.48.10-2
-- cloud-setup: Allow bigger restart bursts (RHEL-56740)
-- cloud-setup: Fix Azure swap of primary and secondary IP addresses (RHEL-56387)
+* Fri Dec 27 2024 Íñigo Huguet <ihuguet@redhat.com> - 1:1.51.5-1
+- Upgrade to 1.51.5 (dev)
+- Never retry ACD on NOARP interfaces (RHEL-47301)
+- Delete routes added by NM to tables different than main (RHEL-67324)
+- Honor route-table property for the route to VPN server (RHEL-69901)
+- Send GARP on bonding-slb failover (RHEL-59558)
+
+* Fri Nov 15 2024 Íñigo Huguet <ihuguet@redhat.com> - 1:1.51.4-1
+- Upgrade to 1.51.4 (dev)
+- Add iputils as recommended dependency for ping command
+- Fix configs shown with NetworkManger --print-config (RHEL-14438)
+- Added ip-ping-addresses to check other hosts presence on activation (RHEL-21160)
+- Support ethtool Forward Error Correction (FEC) (RHEL-24055)
+
+* Mon Nov 04 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.51.3-1
+- Upgrade to 1.51.3 (dev)
+- Support configuring dhcp-send-hostname globally (RHEL-32685)
+- cloud-setup: Support OCI (Oracle Cloud) provider (RHEL-62729)
+- Support automatically adding DNS routes (RHEL-56555)
+- Support IPv6-Only Preferred DHCPv4 option (RHEL-58660)
+- Only validate SR-IOV capacity when enabled (RHEL-58397)
+- Steer IGMP/MLD queries to the active bond balance-slb primary port (RHEL-59559)
+
+* Fri Oct 11 2024 Íñigo Huguet <ihuguet@redhat.com> - 1:1.51.2-2
+- Add ipcalc as dependency of NetworkManager-dispatcher-routing-rules again (RHEL-62201)
+
+* Mon Sep 30 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.51.2-1
+- Upgrade to 1.51.2 (dev)
+- Fix race condition on OVS interface deletion (RHEL-50747)
+- Fix validation of DPDK interface name (RHEL-60022)
+- Support IPVLAN interface (RHEL-47334)
+
+* Mon Sep 16 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.51.1-1
+- Upgrade to 1.51.1 (dev)
+- Use meson and remove autotools configuration
+- Fix crashes (SIGABRT) in several functions (RHEL-17840)
+
+* Tue Sep 10 2024 Fernando Fernandez Mancera <ferferna@redhat.com> - 1:1.51.0-1
+- Upgrade to 1.51.0
+- cloud-setup: Fix primary and secondary address swap in Azure (RHEL-50855)
+
+* Fri Aug 30 2024 Lubomir Rintel <lkundrak@v3.sk> - 1:1.49.90-1
+- Upgrade to 1.50 pre-release (rc1)
+- Retry reverse hostname resolution when it fails (RHEL-17972)
+- Allow VPNs to supply IP configurations with routes but no addresses (RHEL-21875)
+- Warn of dhclient deprecation when it's explicitly chose (RHEL-24622)
+- Allow cloud-setup to restart more rapidly (RHEL-49694)
 
 * Thu Aug 22 2024 Íñigo Huguet <ihuguet@redhat.com> - 1:1.48.10-1
 - Unblock the autoconnect for children when parent is available (RHEL-46904)
