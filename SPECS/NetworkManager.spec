@@ -7,7 +7,7 @@
 %global real_version 1.52.0
 %global git_tag_version_suffix %{nil}
 %global rpm_version %{real_version}
-%global release_version 3
+%global release_version 4
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -193,6 +193,8 @@ Patch0001: 0001-revert-change-default-value-for-ipv4.dad-timeout-from-0-to-200ms
 Patch1001: 1001-core-fail-early-if-we-cannot-get-current-FEC-value-86851.patch
 Patch1002: 1002-oci-update-disconnected-vnics-83198.patch
 Patch1003: 1003-dns-Fix-invalid-memory-access-on-Dnsconfd-DBUS-error-84692.patch
+Patch1004: 1004-ovs-allow-reapplying-ovs-bridge-and-ovs-port-properties-87595.patch
+Patch1005: 1005-core-ovs-fix-NULL-pointer-dereference-in-ovsdb-read-timeout-callback-87347.patch
 
 Requires(post): systemd
 Requires(post): systemd-udev
@@ -1084,6 +1086,10 @@ fi
 
 
 %changelog
+* Thu May 15 2025 Wen Liang <wenliang@redhat.com> - 1:1.52.0-4
+- ovs: allow reapplying ovs-bridge and ovs-port properties (RHEL-87595)
+- core: ovs: fix NULL pointer dereference in ovsdb read timeout callback (RHEL-87347)
+
 * Fri Apr 11 2025 Vladimír Beneš <vbenes@redhat.com> - 1:1.52.0-3
 - Invalid memory access on Dnsconfd DBUS error (RHEL-84692)
 - Support IP configuration for secondary interfaces on Oracle VM from metadata (RHEL-84695)
