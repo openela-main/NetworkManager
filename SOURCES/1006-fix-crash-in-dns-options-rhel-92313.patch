@@ -1,0 +1,28 @@
+From bf3494ceb989bc8fefb89d2366fe4024a1f055b5 Mon Sep 17 00:00:00 2001
+From: Beniamino Galvani <bgalvani@redhat.com>
+Date: Fri, 16 May 2025 09:40:31 +0200
+Subject: [PATCH] ip-config: fix crash in DNS options evaluation
+
+Fixes: 58287cbcc0c8 ('core: rework IP configuration in NetworkManager using layer 3 configuration')
+(cherry picked from commit c1350f40bdc769514f637b4b6754c4ff3ef67b66)
+(cherry picked from commit 35f11cd6e130299cd554bb97e2c165031ed91a72)
+---
+ src/core/nm-ip-config.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/core/nm-ip-config.c b/src/core/nm-ip-config.c
+index eb0ec9aa03..975ae20d45 100644
+--- a/src/core/nm-ip-config.c
++++ b/src/core/nm-ip-config.c
+@@ -826,7 +826,7 @@ _handle_l3cd_changed(NMIPConfig *self, const NML3ConfigData *l3cd)
+     if (v_i != v_i_old)
+         changed_params[n_changed_params++] = obj_properties_ip[PROP_IP_DNS_PRIORITY];
+ 
+-    strarr_old = nm_l3_config_data_get_dns_options(l3cd_old, addr_family, &len);
++    strarr_old = nm_l3_config_data_get_dns_options(l3cd_old, addr_family, &len_old);
+     strarr     = nm_l3_config_data_get_dns_options(priv->l3cd, addr_family, &len);
+     if (!nm_strv_equal_n(strarr, len, strarr_old, len_old))
+         changed_params[n_changed_params++] = obj_properties_ip[PROP_IP_DNS_OPTIONS];
+-- 
+2.49.0
+
