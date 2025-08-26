@@ -1,0 +1,28 @@
+From a86f9ba92ed580bb054d3364ed423130475cb344 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Vladim=C3=ADr=20Bene=C5=A1?= <vbenes@redhat.com>
+Date: Fri, 15 Aug 2025 12:22:39 +0200
+Subject: [PATCH] device: don't disable IPv6 in stage3 on reapply
+
+Slightly modified backport of:
+https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/merge_requests/2232
+---
+ src/core/devices/nm-device.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/core/devices/nm-device.c b/src/core/devices/nm-device.c
+index 10b5d929fb..6b654d6d60 100644
+--- a/src/core/devices/nm-device.c
++++ b/src/core/devices/nm-device.c
+@@ -12204,7 +12204,8 @@ activate_stage3_ip_config(NMDevice *self)
+              * IPv6LL if this is not an assumed connection, since assumed connections
+              * will already have IPv6 set up.
+              */
+-            if (!nm_device_sys_iface_state_is_external_or_assume(self))
++            if ((priv->state <= NM_DEVICE_STATE_IP_CONFIG || priv->ip_data_6.do_reapply)
++                && !nm_device_sys_iface_state_is_external_or_assume(self))
+                 _dev_addrgenmode6_set(self, NM_IN6_ADDR_GEN_MODE_NONE);
+ 
+             /* Re-enable IPv6 on the interface */
+-- 
+2.50.1
+
