@@ -7,7 +7,7 @@
 %global real_version 1.52.0
 %global git_tag_version_suffix %{nil}
 %global rpm_version %{real_version}
-%global release_version 5
+%global release_version 7
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -196,6 +196,11 @@ Patch1003: 1003-dns-Fix-invalid-memory-access-on-Dnsconfd-DBUS-error-84692.patch
 Patch1004: 1004-ovs-allow-reapplying-ovs-bridge-and-ovs-port-properties-87595.patch
 Patch1005: 1005-core-ovs-fix-NULL-pointer-dereference-in-ovsdb-read-timeout-callback-87347.patch
 Patch1006: 1006-fix-crash-in-dns-options-rhel-92313.patch
+Patch1007: 1007-ovs-only-keep-bridges-and-ports-with-NM-interfaces-attached-87167.patch
+Patch1008: 1008-device-update-the-external-down-unmanaged-flag-on-port-attach-release-93183.patch
+Patch1009: 1009-ovs-set-the-tun-interface-up-before-stage3-98550.patch
+Patch1010: 1010-bridge-fix-reapplying-port-VLANs-102742.patch
+Patch1011: 1011-device-dont-disable-IPv6-in-stage3-on-reapply-102771.patch
 
 Requires(post): systemd
 Requires(post): systemd-udev
@@ -1087,6 +1092,16 @@ fi
 
 
 %changelog
+* Wed Aug 13 2025 Vladimír Beneš <vbenes@redhat.com> - 1:1.52.0-7
+- ovs: only keep bridges and ports with NM interfaces attached #2 (RHEL-87167)
+
+* Tue Aug 12 2025 Vladimír Beneš <vbenes@redhat.com> - 1:1.52.0-6
+- ovs: only keep bridges and ports with NM interfaces attached (RHEL-87167)
+- device: update the external-down unmanaged flag on port attach/release (RHEL-93183)
+- ovs: set the tun interface up before stage3 (RHEL-98550)
+- bridge: fix reapplying port VLANs (RHEL-102742)
+- device: don't disable IPv6 in stage3 on reapply (RHEL-102771)
+
 * Fri Jul 18 2025 Íñigo Huguet <ihuguet@redhat.com> - 1:1.52.0-5
 - Fix crash in DNS options evaluation (RHEL-92313)
 
@@ -1107,7 +1122,7 @@ fi
 - Always reset retries when unblocking children or ports (RHEL-78122)
 - Prevent the activation of unavailable OVS interfaces (RHEL-79997)
 
-* Mon Fed 17 2025 Beniamino Galvani <bgalvani@redhat.com> - 1:1.51.90-2
+* Mon Feb 17 2025 Beniamino Galvani <bgalvani@redhat.com> - 1:1.51.90-2
 - Fix state handling in the dnsconfd DNS plugin (RHEL-79693)
 
 * Wed Feb 12 2025 Filip Pokryvka <fpokryvk@redhat.com> - 1:1.51.90-1

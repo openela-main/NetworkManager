@@ -1,0 +1,64 @@
+From fd3eccfb1612a3bac87232e1cbaabc10da80c302 Mon Sep 17 00:00:00 2001
+From: Beniamino Galvani <bgalvani@redhat.com>
+Date: Wed, 7 May 2025 15:19:03 +0200
+Subject: [PATCH] device: update the external-down unmanaged flag on port
+ attach/release
+
+A device has the "external-down" unmanaged flag when:
+
+  !is-created-by-nm AND (!is-up OR (!has-address AND !is-controller))
+
+When the "is-up" or the "has-address" conditions change, we properly update
+the unmanaged flag by calling _dev_unmanaged_check_external_down() in
+_dev_l3_cfg_notify_cb(PLATFORM_CHANGE_ON_IDLE).
+
+The "is-controller" condition changes when another link indicates the
+current device as controller. We currently don't update the unmanaged flag
+when that happens and so it's possible that the device stays unmanaged even
+if it has a port. This can be easily reproduced by running this commands:
+
+    ip link add veth0 type veth peer name veth1
+    ip link add vrf0 type vrf table 10
+    ip link set vrf0 up
+    ip link set veth0 master vrf0
+
+Sometimes, the device shows as "unmanaged" instead of "connected
+(externally)".
+
+Fix this by re-evaluating the "external-down" unmanaged flags on the
+controller when a port is attached or detached.
+
+Fixes: c3586ce01a5b ('device: consider a device with slaves configured')
+
+https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/merge_requests/2209
+---
+ src/core/devices/nm-device.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/src/core/devices/nm-device.c b/src/core/devices/nm-device.c
+index fc6efb2b3c..793378be88 100644
+--- a/src/core/devices/nm-device.c
++++ b/src/core/devices/nm-device.c
+@@ -7158,6 +7158,9 @@ nm_device_controller_release_port(NMDevice           *self,
+                                      NM_UNMANAGED_IS_PORT,
+                                      NM_UNMAN_FLAG_OP_FORGET,
+                                      NM_DEVICE_STATE_REASON_REMOVED);
++
++    /* Once the port is detached, unmanaged-external-down might change */
++    _dev_unmanaged_check_external_down(self, FALSE, FALSE);
+ }
+ 
+ /*****************************************************************************/
+@@ -8852,6 +8855,9 @@ nm_device_controller_add_port(NMDevice *self, NMDevice *port, gboolean configure
+     } else
+         g_return_val_if_fail(port_priv->controller == self, FALSE);
+ 
++    /* Once the port is attached, unmanaged-external-down might change */
++    _dev_unmanaged_check_external_down(self, TRUE, FALSE);
++
+     nm_device_queue_recheck_assume(self);
+     nm_device_queue_recheck_assume(port);
+ 
+-- 
+2.50.1
+
