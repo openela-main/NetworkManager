@@ -1,0 +1,82 @@
+From 1489f9d0e32ac1e9f5f86f5fc940a3c8ed6fc17e Mon Sep 17 00:00:00 2001
+From: Beniamino Galvani <bgalvani@redhat.com>
+Date: Tue, 8 Jul 2025 15:09:25 +0200
+Subject: [PATCH 1/2] bridge: fix reapplying port VLANs
+
+If the bridge default-pvid is zero, it means that the default PVID is
+disabled. That is, the bridge PVID is not propagated to ports.
+
+Currently NM tries to merge the existing bridge VLANs on the port with
+the default PVID from the bridge, even when the PVID is zero. This
+causes an error when setting the new VLAN list in the kernel, because
+it rejects VLAN zero.
+
+Skip the merge of the default PVID when zero.
+
+Fixes: c5d1e35f993e ('device: support reapplying bridge-port VLANs')
+(cherry picked from commit bf79fbd6780fd38ca29c12a137951c8729379767)
+(cherry picked from commit 956f9ba365c18bf00d91ffd0842c09932dd9a5ec)
+---
+ src/core/devices/nm-device-bridge.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/src/core/devices/nm-device-bridge.c b/src/core/devices/nm-device-bridge.c
+index 7c34fde07f..45cdd83f07 100644
+--- a/src/core/devices/nm-device-bridge.c
++++ b/src/core/devices/nm-device-bridge.c
+@@ -735,6 +735,11 @@ merge_bridge_vlan_default_pvid(NMPlatformBridgeVlan *vlans, guint *num_vlans, gu
+     gboolean              has_pvid = FALSE;
+     guint                 i;
+ 
++    if (default_pvid == 0) {
++        /* default_pvid=0 means that the default PVID is disabled. No need to merge it. */
++        return vlans;
++    }
++
+     for (i = 0; i < *num_vlans; i++) {
+         if (vlans[i].pvid) {
+             has_pvid = TRUE;
+-- 
+2.50.1
+
+
+From 0135379ac48b71f5029c72f368b44d9e1244ef80 Mon Sep 17 00:00:00 2001
+From: Beniamino Galvani <bgalvani@redhat.com>
+Date: Tue, 8 Jul 2025 17:16:25 +0200
+Subject: [PATCH 2/2] device: accept changes to the bond-port.vlans during
+ reapply
+
+Commit c5d1e35f993e ('device: support reapplying bridge-port VLANs')
+didn't update can_reapply_change() to accept the "bridge-port.vlans"
+property during a reapply. So, it was only possible to change the
+bridge port VLANs by updating the "bridge.vlan-default-pvid" property
+and doing a reapply. Fix that.
+
+Fixes: c5d1e35f993e ('device: support reapplying bridge-port VLANs')
+(cherry picked from commit 261fa8db336e0571479567e2bda10dbf5d171b0a)
+(cherry picked from commit c647c060d6dabefeb05f6be6c4af8778437d9a1e)
+---
+ src/core/devices/nm-device.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/src/core/devices/nm-device.c b/src/core/devices/nm-device.c
+index 2f2f25a5b8..dee160ed90 100644
+--- a/src/core/devices/nm-device.c
++++ b/src/core/devices/nm-device.c
+@@ -14003,6 +14003,13 @@ can_reapply_change(NMDevice   *self,
+         return TRUE;
+     }
+ 
++    if (nm_streq(setting_name, NM_SETTING_BRIDGE_PORT_SETTING_NAME)) {
++        return nm_device_hash_check_invalid_keys(diffs,
++                                                 NM_SETTING_BRIDGE_PORT_SETTING_NAME,
++                                                 error,
++                                                 NM_SETTING_BRIDGE_PORT_VLANS);
++    }
++
+ out_fail:
+     g_set_error(error,
+                 NM_DEVICE_ERROR,
+-- 
+2.50.1
+
