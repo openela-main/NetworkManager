@@ -1,0 +1,93 @@
+From 589556437b65dba2a1630d923fd7ff877ed8d6cd Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=8D=C3=B1igo=20Huguet?= <ihuguet@riseup.net>
+Date: Thu, 9 Oct 2025 12:24:11 +0200
+Subject: [PATCH] ovs: don't remove unrelated external ports
+
+The commit linked below introduced a bug that caused that OVS ports
+added externally to NM are always deleted when we delete any OVS
+interface. It affects to all externally added ports, including those
+that are not related to the deleted interface and even those in
+different OVS bridges.
+
+Fix it by only modifying ports and bridges that are ascendants of the
+deleted interface, leaving everything else untouched.
+
+Note that bridges and ports still need to have at least one NM-managed
+interface, otherwise they will also be purged. For example, an NM-owned
+OVS bridge with 2 ports+iface, one NM-owned and one external: if we
+delete the NM-owned iface, both ports and the bridge will be deleted.
+For now, this is a known limitation that is not being fixed here.
+
+Fixes: 476c89b6f2cd ('ovs: only keep bridges and ports with NM interfaces attached')
+(cherry picked from commit 93491d76ecf75c202ff82369e3eb72e7e6d37c8a)
+(cherry picked from commit 8326cc32d64441dd993b5b1e73ded21d548efa6d)
+(cherry picked from commit a2cad8cb1027d14dd7239b44468de8feeaab8b28)
+---
+ src/core/devices/ovs/nm-ovsdb.c | 32 +++++++++++++++++---------------
+ 1 file changed, 17 insertions(+), 15 deletions(-)
+
+diff --git a/src/core/devices/ovs/nm-ovsdb.c b/src/core/devices/ovs/nm-ovsdb.c
+index 84467896d5..42b19c8090 100644
+--- a/src/core/devices/ovs/nm-ovsdb.c
++++ b/src/core/devices/ovs/nm-ovsdb.c
+@@ -1447,40 +1447,42 @@ _delete_interface(NMOvsdb *self, json_t *params, const char *ifname)
+                 json_array_append_new(new_interfaces, json_pack("[s,s]", "uuid", interface_uuid));
+             }
+ 
+-            if (num_nm_interfaces == 0) {
+-                /* The port no longer has any NM interface. Don't add it to "new_ports" and set
+-                 * ports_changed=TRUE, so that it will be deleted. */
++            if (interfaces_changed && num_nm_interfaces == 0) {
++                /* We are deleting the last nm-interface of this port. Don't add it to "new_ports"
++                 * and set ports_changed=TRUE, so that it will be deleted. */
+                 ports_changed = TRUE;
+             } else {
++                /* Keep this port: it's still alive, or it's unrelated to the deleted interface */
++                json_array_append_new(new_ports, json_pack("[s,s]", "uuid", port_uuid));
++                if (ovs_port->connection_uuid)
++                    num_nm_ports++;
++
+                 if (interfaces_changed) {
+-                    /* An interface needs to be deleted from this port */
++                    /* This port is still alive, but an interface needs to be deleted from it */
+                     _expect_port_interfaces(params, ovs_port->name, interfaces);
+                     _set_port_interfaces(params, ovs_port->name, new_interfaces);
+                 }
+-                /* The port is still alive */
+-                json_array_append_new(new_ports, json_pack("[s,s]", "uuid", port_uuid));
+-                if (ovs_port->connection_uuid)
+-                    num_nm_ports++;
+             }
+         }
+ 
+-        if (num_nm_ports == 0) {
+-            /* The bridge no longer has any NM port. Don't add it to "new_bridges" and set
+-             * bridges_changed=TRUE, so that it will be deleted. */
++        if (ports_changed && num_nm_ports == 0) {
++            /* We are deleting the last nm-port of this bridge. Don't add it to "new_bridges"
++             * and set bridges_changed=TRUE, so that it will be deleted. */
+             bridges_changed = TRUE;
+         } else {
++            /* Keep this bridge: it's still alive, or it's unrelated to the deleted interface */
++            json_array_append_new(new_bridges, json_pack("[s,s]", "uuid", ovs_bridge->bridge_uuid));
++
+             if (ports_changed) {
+-                /* A port needs to be deleted from this bridge */
++                /* This bridge is still alive, but a port needs to be deleted from it */
+                 _expect_bridge_ports(params, ovs_bridge->name, ports);
+                 _set_bridge_ports(params, ovs_bridge->name, new_ports);
+             }
+-            /* The bridge is still alive */
+-            json_array_append_new(new_bridges, json_pack("[s,s]", "uuid", ovs_bridge->bridge_uuid));
+         }
+     }
+ 
+     if (bridges_changed) {
+-        /* A port needs to be deleted from this bridge */
++        /* A bridge needs to be deleted */
+         _expect_ovs_bridges(params, priv->db_uuid, bridges);
+         _set_ovs_bridges(params, priv->db_uuid, new_bridges);
+     }
+-- 
+2.50.1
+
