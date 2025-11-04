@@ -7,7 +7,7 @@
 %global real_version 1.52.0
 %global git_tag_version_suffix %{nil}
 %global rpm_version %{real_version}
-%global release_version 7
+%global release_version 9
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -201,6 +201,8 @@ Patch1008: 1008-device-update-the-external-down-unmanaged-flag-on-port-attach-re
 Patch1009: 1009-ovs-set-the-tun-interface-up-before-stage3-98550.patch
 Patch1010: 1010-bridge-fix-reapplying-port-VLANs-102742.patch
 Patch1011: 1011-device-dont-disable-IPv6-in-stage3-on-reapply-102771.patch
+Patch1012: 1012-ovs-don-t-remove-unrelated-external-ports-rhel-121102.patch
+Patch1013: 1013-support-reapplying-sriov-vfs-rhel-113952.patch
 
 Requires(post): systemd
 Requires(post): systemd-udev
@@ -1092,6 +1094,13 @@ fi
 
 
 %changelog
+* Mon Oct 20 2025 Íñigo Huguet <ihuguet@redhat.com> - 1:1.52.0-9
+- Rebuild due to wrong buildroot picked in last build
+
+* Wed Oct 15 2025 Íñigo Huguet <ihuguet@redhat.com> - 1:1.52.0-8
+- Support reapplying sriov.vfs (RHEL-113952)
+- Fix removing unrelated OVS ports (RHEL-121102)
+
 * Wed Aug 13 2025 Vladimír Beneš <vbenes@redhat.com> - 1:1.52.0-7
 - ovs: only keep bridges and ports with NM interfaces attached #2 (RHEL-87167)
 
