@@ -4,10 +4,10 @@
 %global glib2_version %(pkg-config --modversion glib-2.0 2>/dev/null || echo bad)
 
 %global epoch_version 1
-%global real_version 1.52.0
-%global git_tag_version_suffix %{nil}
+%global real_version 1.54.0
+%global git_tag_version 1.54.0
 %global rpm_version %{real_version}
-%global release_version 8
+%global release_version 1
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -172,7 +172,7 @@ Group: System Environment/Base
 License: GPL-2.0-or-later AND LGPL-2.1-or-later
 URL: https://networkmanager.dev/
 
-Source: https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/releases/%{real_version}%{git_tag_version_suffix}/downloads/%{name}-%{real_version}.tar.xz
+Source: https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/releases/%{git_tag_version}/downloads/%{name}-%{real_version}.tar.xz
 Source1: NetworkManager.conf
 Source2: 00-server.conf
 Source4: 20-connectivity-fedora.conf
@@ -189,19 +189,6 @@ Source9: readme-ifcfg-rh-migrated.txt
 
 # Bugfixes that are only relevant until next rebase of the package.
 # Patch1001: 1001-some.patch
-Patch1001: 1001-core-fail-early-if-we-cannot-get-current-FEC-value-86838.patch
-Patch1002: 1002-oci-update-disconnected-vnics-83198.patch
-Patch1003: 1003-dns-Fix-invalid-memory-access-on-Dnsconfd-DBUS-error-83175.patch
-Patch1004: 1004-ovs-allow-reapplying-ovs-bridge-and-ovs-port-properties-87597.patch
-Patch1005: 1005-core-ovs-fix-NULL-pointer-dereference-in-ovsdb-read-timeout-callback-87348.patch
-Patch1006: 1006-fix-crash-in-dns-options-rhel-97261.patch
-Patch1007: 1007-ovs-only-keep-bridges-and-ports-with-NM-interfaces-attached-87169.patch
-Patch1008: 1008-device-update-the-external-down-unmanaged-flag-on-port-attach-release-97258.patch
-Patch1009: 1009-ovs-set-the-tun-interface-up-before-stage3-98552.patch
-Patch1010: 1010-bridge-fix-reapplying-port-VLANs-102744.patch
-Patch1011: 1011-device-dont-disable-IPv6-in-stage3-on-reapply-102773.patch
-Patch1012: 1012-ovs-don-t-remove-unrelated-external-ports-rhel-121105.patch
-Patch1013: 1013-support-reapplying-sriov-vfs-rhel-113955.patch
 
 Requires(post): systemd
 Requires(post): systemd-udev
@@ -317,6 +304,7 @@ BuildRequires: libubsan
 BuildRequires: firewalld-filesystem
 BuildRequires: iproute
 BuildRequires: iproute-tc
+BuildRequires: libnvme-devel >= 1.5
 
 Provides: %{name}-dispatcher%{?_isa} = %{epoch}:%{version}-%{release}
 
@@ -777,6 +765,11 @@ rm -f %{buildroot}%{_libdir}/*.la
 rm -f %{buildroot}%{_libdir}/pppd/%{ppp_version}/*.la
 rm -f %{buildroot}%{nmplugindir}/*.la
 
+# Don't use the *-initrd.service files yet, wait dracut to support them
+rm -f %{buildroot}%{_unitdir}/NetworkManager-config-initrd.service
+rm -f %{buildroot}%{_unitdir}/NetworkManager-initrd.service
+rm -f %{buildroot}%{_unitdir}/NetworkManager-wait-online-initrd.service
+
 # Ensure the documentation timestamps are constant to avoid multilib conflicts
 find %{buildroot}%{_datadir}/gtk-doc -exec touch --reference meson.build '{}' \+
 
@@ -1093,33 +1086,53 @@ fi
 
 
 %changelog
-* Wed Oct 15 2025 Íñigo Huguet <ihuguet@redhat.com> - 1:1.52.0-8
-- Support reapplying sriov.vfs (RHEL-113955)
-- Fix removing unrelated OVS ports (RHEL-121105)
+* Mon Aug 04 2025 Filip Pokryvka <fpokryvk@redhat.com> - 1:1.54.0-1
+- Update to 1.54.0
+- Fix reaply on bridge port VLAN (RHEL-102318)
+- Accept hostnames longer than 64 characters from DNS lookup (RHEL-104357)
 
-* Wed Aug 13 2025 Vladimír Beneš <vbenes@redhat.com> - 1:1.52.0-7
-- ovs: only keep bridges and ports with NM interfaces attached #2 (RHEL-87167)
+* Fri Jul 11 2025 Filip Pokryvka <fpokryvk@redhat.com> - 1:1.53.92-1
+- Update to 1.54.0 (rc3)
+- Fix ipv6 static route deleted with dualstack (RHEL-102774)
+- Allow setting IP method to disabled in port connections (RHEL-90756)
 
-* Tue Aug 12 2025 Vladimír Beneš <vbenes@redhat.com> - 1:1.52.0-6
-- ovs: only keep bridges and ports with NM interfaces attached (RHEL-87169)
-- device: update the external-down unmanaged flag on port attach/release (RHEL-97258)
-- ovs: set the tun interface up before stage3 (RHEL-98552)
-- bridge: fix reapplying port VLANs (RHEL-102744)
-- device: don't disable IPv6 in stage3 on reapply (RHEL-102773)
+* Fri Jun 20 2025 Filip Pokryvka <fpokryvk@redhat.com> - 1:1.53.91-1
+- Update to 1.54.0 (rc2)
+- Support deactivating a connection without resetting SRIOV sriov_numvfs (RHEL-69125)
+- Fix a race condition in ovs tun interface (RHEL-17358)
 
-* Fri Jul 18 2025 Íñigo Huguet <ihuguet@redhat.com> - 1:1.52.0-5
-- Fix crash in DNS options evaluation (RHEL-97261)
+* Fri May 30 2025 Vladimír Beneš <vbenes@redhat.com> - 1:1.53.90-1
+- Update to 1.54.0 (rc1)
+- Devices not becoming managed sometimes (RHEL-89914)
+- Crash on _l3cfg_notify_cb (RHEL-92020)
+- Fix autoconnect-ports for unrealized VLANs and other virtual devices (NMT-1610)
 
-* Thu May 15 2025 Wen Liang <wenliang@redhat.com> - 1:1.52.0-4
-- ovs: allow reapplying ovs-bridge and ovs-port properties (RHEL-87597)
-- core: ovs: fix NULL pointer dereference in ovsdb read timeout callback (RHEL-87348)
+* Mon May 5 2025 Vladimír Beneš <vbenes@redhat.com> - 1:1.53.4-1
+- Update to 1.53.4 (dev)
+- initrd: add new NBFT parser (RHEL-83058)
+- Add support for configuring per-device IPv4 sysctl forwarding option in NetworkManager (RHEL-89582)
+- Support reapply on OVS settings (RHEL-86877)
+- Add support for configuring the loopback interface in nmtui (RHEL-70484)
+- Replace ioctl wth netlink for ethtool in NetworkManager (RHEL-1794)
+- NetworkManager does not add the `lock` attribute when `rto_min` is used (RHEL-83752)
+- Can not change `bridge.options.mcast-snooping-enable` on partial managemd OVS bridge (RHEL-86767)
 
-* Sat Apr 12 2025 Vladimír Beneš <vbenes@redhat.com> - 1:1.52.0-3
-- Invalid memory access on Dnsconfd DBUS error (RHEL-84691)
-- Support IP configuration for secondary interfaces on Oracle VM from metadata (RHEL-85644)
+* Mon Apr 14 2025 Filip Pokrývka <fpokryvk@redhat.com> - 1:1.53.3-1
+- Update to 1.53.3 (dev)
+- Add more IPv6 prefix delegation options (RHEL-81948)
+- Fix order of parsing port/controller properies in nmcli (RHEL-80273)
+- Improve interface activation logic (RHEL-80157)
+- Fix WireGuard IPv6 firewall rules (RHEL-79975)
+- Support OVS-DPDK dpdk-lsc-interrupt and mtu_request configurations (RHEL-78769)
 
-* Wed Apr 09 2025 Wen Liang <wenliang@redhat.com> - 1:1.52.0-2
-- core: fail early if we cannot get current FEC value (RHEL-86838)
+* Mon Mar 24 2025 Vladimír Beneš <vbenes@redhat.com> - 1:1.53.2-1
+- Update to 1.53.2 (dev)
+- Fix invalid memory access on Dnsconfd DBUS error (RHEL-83175)
+- Avoid getting transient hostname when "localhost" set in /etc/hostname (RHEL-55730)
+
+* Mon Mar 03 2025 Íñigo Huguet <ihuguet@redhat.com> - 1:1.53.1-1
+- Update to 1.53.1 (dev)
+- Update MPTCP endpoints creation order (RHEL-80487)
 
 * Mon Mar 03 2025 Íñigo Huguet <ihuguet@redhat.com> - 1:1.52.0-1
 - Update to 1.52.0
