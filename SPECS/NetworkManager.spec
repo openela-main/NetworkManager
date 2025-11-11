@@ -7,7 +7,7 @@
 %global real_version 1.54.0
 %global git_tag_version 1.54.0
 %global rpm_version %{real_version}
-%global release_version 1
+%global release_version 3
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -189,7 +189,8 @@ Source9: readme-ifcfg-rh-migrated.txt
 Patch0001: 0001-revert-change-default-value-for-ipv4.dad-timeout-from-0-to-200ms.patch
 
 # Bugfixes that are only relevant until next rebase of the package.
-# Patch1001: 1001-some.patch
+Patch1001: 1001-ovs-don-t-remove-unrelated-external-ports-rhel-121103.patch
+Patch1002: 1002-support-reapplying-sriov-vfs-rhel-113953.patch
 
 Requires(post): systemd
 Requires(post): systemd-udev
@@ -1087,6 +1088,13 @@ fi
 
 
 %changelog
+* Mon Oct 20 2025 Íñigo Huguet <ihuguet@redhat.com> - 1:1.54.0-3
+- Rebuild due to wrong buildroot picked in last build
+
+* Wed Oct 15 2025 Íñigo Huguet <ihuguet@redhat.com> - 1:1.54.0-2
+- Support reapplying sriov.vfs (RHEL-113953)
+- Fix removing unrelated OVS ports (RHEL-121103)
+
 * Mon Aug 04 2025 Filip Pokryvka <fpokryvk@redhat.com> - 1:1.54.0-1
 - Update to 1.54.0
 - Fix reaply on bridge port VLAN (RHEL-102743)
@@ -1117,14 +1125,6 @@ fi
 - Replace ioctl wth netlink for ethtool in NetworkManager (RHEL-85764)
 - NetworkManager does not add the `lock` attribute when `rto_min` is used (RHEL-85778)
 - Can not change `bridge.options.mcast-snooping-enable` on partial managemd OVS bridge (RHEL-87168)
-
-Resolves: RHEL-83061
-Resolves: RHEL-59083
-Resolves: RHEL-87596
-Resolves: RHEL-85770
-Resolves: RHEL-85764
-Resolves: RHEL-85778
-Resolves: RHEL-87168
 
 * Mon Apr 14 2025 Filip Pokrývka <fpokryvk@redhat.com> - 1:1.53.3-1
 - Update to 1.53.3 (dev)
