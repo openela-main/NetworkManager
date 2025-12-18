@@ -7,7 +7,7 @@
 %global real_version 1.54.0
 %global git_tag_version 1.54.0
 %global rpm_version %{real_version}
-%global release_version 1
+%global release_version 2
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -188,7 +188,8 @@ Source9: readme-ifcfg-rh-migrated.txt
 # Patch0001: 0001-some.patch
 
 # Bugfixes that are only relevant until next rebase of the package.
-# Patch1001: 1001-some.patch
+Patch1001: 1001-ovs-don-t-remove-unrelated-external-ports-rhel-121106.patch
+Patch1002: 1002-support-reapplying-sriov-vfs-rhel-113956.patch
 
 Requires(post): systemd
 Requires(post): systemd-udev
@@ -1086,6 +1087,10 @@ fi
 
 
 %changelog
+* Wed Oct 15 2025 Íñigo Huguet <ihuguet@redhat.com> - 1:1.54.0-2
+- Support reapplying sriov.vfs (RHEL-113956)
+- Fix removing unrelated OVS ports (RHEL-121106)
+
 * Mon Aug 04 2025 Filip Pokryvka <fpokryvk@redhat.com> - 1:1.54.0-1
 - Update to 1.54.0
 - Fix reaply on bridge port VLAN (RHEL-102318)
