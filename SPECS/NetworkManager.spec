@@ -4,10 +4,10 @@
 %global glib2_version %(pkg-config --modversion glib-2.0 2>/dev/null || echo bad)
 
 %global epoch_version 1
-%global real_version 1.54.0
-%global git_tag_version 1.54.0
+%global real_version 1.54.3
+%global git_tag_version 1.54.3
 %global rpm_version %{real_version}
-%global release_version 4
+%global release_version 2
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -189,9 +189,7 @@ Source9: readme-ifcfg-rh-migrated.txt
 Patch0001: 0001-revert-change-default-value-for-ipv4.dad-timeout-from-0-to-200ms.patch
 
 # Bugfixes that are only relevant until next rebase of the package.
-Patch1001: 1001-ovs-don-t-remove-unrelated-external-ports-rhel-121103.patch
-Patch1002: 1002-support-reapplying-sriov-vfs-rhel-113953.patch
-Patch1003: 1003-remove-lacp-active-from-reapply-subset-rhel-154243.patch
+# Patch1001: 1001-some.patch
 
 Requires(post): systemd
 Requires(post): systemd-udev
@@ -203,8 +201,7 @@ Requires(postun): systemd
 Requires: dbus >= %{dbus_version}
 Requires: glib2 >= %{glib2_version}
 Requires: %{name}-libnm%{?_isa} = %{epoch}:%{version}-%{release}
-
-Recommends: iputils
+Requires: iputils
 
 %if 0%{?rhel} == 8
 # Older libndp versions use select() (rh#1933041). On well known distros,
@@ -902,6 +899,7 @@ fi
 %{_libexecdir}/nm-dispatcher
 %{_libexecdir}/nm-initrd-generator
 %{_libexecdir}/nm-daemon-helper
+%{_libexecdir}/nm-libnm-helper
 %{_libexecdir}/nm-priv-helper
 %dir %{_libdir}/%{name}
 %dir %{nmplugindir}
@@ -1089,15 +1087,25 @@ fi
 
 
 %changelog
-* Mon Mar 09 2026 Ján Václav <jvaclav@redhat.com> - 1:1.54.0-4
-- Fix unexpected lacp_active error in logs (RHEL-154243)
+* Wed Jan 7 2026 Beniamino Galvani <bgalvani@redhat.com> - 1:1.54.3-2
+- Add hard dependency on iputils (RHEL-134751)
 
-* Mon Oct 20 2025 Íñigo Huguet <ihuguet@redhat.com> - 1:1.54.0-3
-- Rebuild due to wrong buildroot picked in last build
+* Mon Dec 15 2025 Íñigo Huguet <ihuguet@redhat.com> - 1:1.54.3-1
+- Update to 1.54.3
+- Fix CVE-2025-9615 (RHEL-111783)
 
-* Wed Oct 15 2025 Íñigo Huguet <ihuguet@redhat.com> - 1:1.54.0-2
-- Support reapplying sriov.vfs (RHEL-113953)
-- Fix removing unrelated OVS ports (RHEL-121103)
+* Tue Nov 18 2025 Íñigo Huguet <ihuguet@redhat.com> - 1:1.54.2-1
+- Update to 1.54.2
+- Support setting protocol version of HSR/PRP (RHEL-122172)
+- Support interlink for HSR/PRP (RHEL-122175)
+- Improve logging of networking off (RHEL-122173 )
+- Don't delete unrelated OVS ports (RHEL-121104)
+
+* Thu Sep 18 2025 Vladimír Beneš <vbenes@redhat.com>- 1:1.54.1-1
+- Update to 1.54.1
+- Adding a VF configuration resets and re-configures all other VFs (RHEL-113954)
+- Fix connection.autoconnect-ports of OVS ports (RHEL-114200)
+- Global DNS config without domains silently ignored from D-Bus (RHEL-115973)
 
 * Mon Aug 04 2025 Filip Pokryvka <fpokryvk@redhat.com> - 1:1.54.0-1
 - Update to 1.54.0
@@ -1129,6 +1137,14 @@ fi
 - Replace ioctl wth netlink for ethtool in NetworkManager (RHEL-85764)
 - NetworkManager does not add the `lock` attribute when `rto_min` is used (RHEL-85778)
 - Can not change `bridge.options.mcast-snooping-enable` on partial managemd OVS bridge (RHEL-87168)
+
+Resolves: RHEL-83061
+Resolves: RHEL-59083
+Resolves: RHEL-87596
+Resolves: RHEL-85770
+Resolves: RHEL-85764
+Resolves: RHEL-85778
+Resolves: RHEL-87168
 
 * Mon Apr 14 2025 Filip Pokrývka <fpokryvk@redhat.com> - 1:1.53.3-1
 - Update to 1.53.3 (dev)
