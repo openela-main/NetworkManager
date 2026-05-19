@@ -4,10 +4,10 @@
 %global glib2_version %(pkg-config --modversion glib-2.0 2>/dev/null || echo bad)
 
 %global epoch_version 1
-%global real_version 1.54.0
-%global git_tag_version 1.54.0
+%global real_version 1.56.0
+%global git_tag_version 1.56.0
 %global rpm_version %{real_version}
-%global release_version 3
+%global release_version 1
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -188,9 +188,7 @@ Source9: readme-ifcfg-rh-migrated.txt
 # Patch0001: 0001-some.patch
 
 # Bugfixes that are only relevant until next rebase of the package.
-Patch1001: 1001-ovs-don-t-remove-unrelated-external-ports-rhel-121106.patch
-Patch1002: 1002-support-reapplying-sriov-vfs-rhel-113956.patch
-Patch1003: 1003-remove-lacp-active-from-reapply-subset-rhel-154247.patch
+# Patch1001: 1001-some.patch
 
 Requires(post): systemd
 Requires(post): systemd-udev
@@ -901,6 +899,7 @@ fi
 %{_libexecdir}/nm-dispatcher
 %{_libexecdir}/nm-initrd-generator
 %{_libexecdir}/nm-daemon-helper
+%{_libexecdir}/nm-libnm-helper
 %{_libexecdir}/nm-priv-helper
 %dir %{_libdir}/%{name}
 %dir %{nmplugindir}
@@ -1088,12 +1087,27 @@ fi
 
 
 %changelog
-* Mon Mar 09 2026 Ján Václav <jvaclav@redhat.com> - 1:1.54.0-3
-- Fix unexpected lacp_active error in logs (RHEL-154247)
+* Fri Feb 13 2026 Vladimír Beneš <vbenes@redhat.com> - 1:1.56.0-1
+- Update to 1.56.0
 
-* Wed Oct 15 2025 Íñigo Huguet <ihuguet@redhat.com> - 1:1.54.0-2
-- Support reapplying sriov.vfs (RHEL-113956)
-- Fix removing unrelated OVS ports (RHEL-121106)
+* Mon Dec 15 2025 Íñigo Huguet <ihuguet@redhat.com> - 1:1.55.91-1
+- Update to 1.56.0 (rc2)
+- Fix CVE-2025-9615 (RHEL-111772)
+
+* Tue Nov 18 2025 Íñigo Huguet <ihuguet@redhat.com> - 1:1.55.90-1
+- Update to 1.56.0 (rc1)
+- Support setting protocol version of HSR/PRP (RHEL-100764)
+- Support interlink for HSR/PRP (RHEL-100768)
+- Reject connections if the corresponding feature is disabled or removed (RHEL-93829)
+- Improve logging of networking off (RHEL-103925)
+- Don't delete unrelated OVS ports (RHEL-120176)
+
+* Tue Sep 16 2025 Vladimír Beneš <vbenes@redhat.com> - 1:1.55.4-1
+- Update to 1.55.4 (dev)
+- Adding a VF configuration resets and re-configures all other VFs (RHEL-95844)
+- Fix connection.autoconnect-ports of OVS ports (RHEL-93876)
+- Global DNS config without domains silently ignored from D-Bus (RHEL-109853)
+- Add support for a DHCP client-id kernelarg (RHEL-108454)
 
 * Mon Aug 04 2025 Filip Pokryvka <fpokryvk@redhat.com> - 1:1.54.0-1
 - Update to 1.54.0
