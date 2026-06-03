@@ -1,0 +1,93 @@
+From 5723fd5ac2aff927c7f9a0d161af57fceed9005d Mon Sep 17 00:00:00 2001
+From: Beniamino Galvani <bgalvani@redhat.com>
+Date: Thu, 16 Oct 2025 15:36:22 +0200
+Subject: [PATCH] device: set bridge in supplicant for 802.1X ethernet and
+ macsec
+
+When authenticating via 802.1X, the supplicant must be made aware of
+the bridge the interface is attached to. This was already done for
+wifi in commit ae31b4bf4eaa ('wifi: set the BridgeIfname supplicant
+property when needed'). When setting the BridgeIfname property, the
+supplicant opens an additional socket to listen on the bridge, to
+ensure that all incoming EAPOL packets are received.
+
+Without this patch, the initial authentication usually works because
+it is started during stage2 (prepare), when the device is not yet
+attached to the bridge, but then the re-authentication fails.
+
+Note: I could reproduce the problem only when the bridge is configured
+with bridge.group-forward-mask 8.
+
+Resolves: https://issues.redhat.com/browse/RHEL-121153
+https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/merge_requests/2301
+(cherry picked from commit 965aa810278b24dd52d21bfcbc41a052767b6070)
+---
+ src/core/devices/nm-device-ethernet.c | 13 +++++++++++++
+ src/core/devices/nm-device-macsec.c   | 13 +++++++++++++
+ 2 files changed, 26 insertions(+)
+
+diff --git a/src/core/devices/nm-device-ethernet.c b/src/core/devices/nm-device-ethernet.c
+index 4034fdaad6..eed57e918d 100644
+--- a/src/core/devices/nm-device-ethernet.c
++++ b/src/core/devices/nm-device-ethernet.c
+@@ -701,6 +701,9 @@ supplicant_iface_start(NMDeviceEthernet *self)
+     NMDeviceEthernetPrivate            *priv   = NM_DEVICE_ETHERNET_GET_PRIVATE(self);
+     gs_unref_object NMSupplicantConfig *config = NULL;
+     gs_free_error GError               *error  = NULL;
++    NMActRequest                       *request;
++    NMActiveConnection                 *controller_ac;
++    NMDevice                           *controller;
+ 
+     config = build_supplicant_config(self, &error);
+     if (!config) {
+@@ -715,6 +718,16 @@ supplicant_iface_start(NMDeviceEthernet *self)
+     }
+ 
+     nm_supplicant_interface_disconnect(priv->supplicant.iface);
++
++    /* Tell the supplicant in which bridge the interface is */
++    if ((request = nm_device_get_act_request(NM_DEVICE(self)))
++        && (controller_ac = nm_active_connection_get_controller(NM_ACTIVE_CONNECTION(request)))
++        && (controller = nm_active_connection_get_device(controller_ac))
++        && nm_device_get_device_type(controller) == NM_DEVICE_TYPE_BRIDGE) {
++        nm_supplicant_interface_set_bridge(priv->supplicant.iface, nm_device_get_iface(controller));
++    } else
++        nm_supplicant_interface_set_bridge(priv->supplicant.iface, NULL);
++
+     nm_supplicant_interface_assoc(priv->supplicant.iface, config, supplicant_iface_assoc_cb, self);
+     return TRUE;
+ }
+diff --git a/src/core/devices/nm-device-macsec.c b/src/core/devices/nm-device-macsec.c
+index 2ff1eeb30a..5d67081c77 100644
+--- a/src/core/devices/nm-device-macsec.c
++++ b/src/core/devices/nm-device-macsec.c
+@@ -433,6 +433,9 @@ supplicant_iface_start(NMDeviceMacsec *self)
+     NMDeviceMacsecPrivate              *priv   = NM_DEVICE_MACSEC_GET_PRIVATE(self);
+     gs_unref_object NMSupplicantConfig *config = NULL;
+     gs_free_error GError               *error  = NULL;
++    NMActRequest                       *request;
++    NMActiveConnection                 *controller_ac;
++    NMDevice                           *controller;
+ 
+     config = build_supplicant_config(self, &error);
+     if (!config) {
+@@ -445,6 +448,16 @@ supplicant_iface_start(NMDeviceMacsec *self)
+     }
+ 
+     nm_supplicant_interface_disconnect(priv->supplicant.iface);
++
++    /* Tell the supplicant in which bridge the interface is */
++    if ((request = nm_device_get_act_request(NM_DEVICE(self)))
++        && (controller_ac = nm_active_connection_get_controller(NM_ACTIVE_CONNECTION(request)))
++        && (controller = nm_active_connection_get_device(controller_ac))
++        && nm_device_get_device_type(controller) == NM_DEVICE_TYPE_BRIDGE) {
++        nm_supplicant_interface_set_bridge(priv->supplicant.iface, nm_device_get_iface(controller));
++    } else
++        nm_supplicant_interface_set_bridge(priv->supplicant.iface, NULL);
++
+     nm_supplicant_interface_assoc(priv->supplicant.iface, config, supplicant_iface_assoc_cb, self);
+     return TRUE;
+ }
+-- 
+2.53.0
+
