@@ -7,7 +7,7 @@
 %global real_version 1.54.3
 %global git_tag_version 1.54.3
 %global rpm_version %{real_version}
-%global release_version 3
+%global release_version 4
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -191,6 +191,7 @@ Patch0001: 0001-revert-change-default-value-for-ipv4.dad-timeout-from-0-to-200ms
 # Bugfixes that are only relevant until next rebase of the package.
 # Patch1001: 1001-some.patch
 Patch1001: 1001-device-set-bridge-in-supplicant-for-802.1X-ethernet-.patch
+Patch1002: 1002-The-valid-range-of-arp_missed_max-according-to-the-k.patch
 
 Requires(post): systemd
 Requires(post): systemd-udev
@@ -1088,6 +1089,9 @@ fi
 
 
 %changelog
+* Tue Jun 9 2026 Rahul Rajesh <rrajesh@redhat.com> - 1:1.54.3-4
+- Fix arp_missed_max error on 802.3ad bond reapply (RHEL-182629)
+
 * Thu May 7 2026 Rahul Rajesh <rrajesh@redhat.com> - 1:1.54.3-3
 - Fix 802.1x auth for bridge interface (RHEL-151941)
 

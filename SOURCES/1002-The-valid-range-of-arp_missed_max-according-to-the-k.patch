@@ -1,0 +1,228 @@
+From d2c9303908a1078f1bc2555bb7df70660feb777d Mon Sep 17 00:00:00 2001
+From: Pradyumn Rahar <pradyumn.rahar@oracle.com>
+Date: Tue, 14 Apr 2026 10:20:27 +0530
+Subject: [PATCH] The valid range of arp_missed_max according to the kernel is
+ 1-255, while the default value of the same in NM is 0, which causes warnings
+ to arise, change this default value.
+
+Allow the range in NM to stay 0-255 as 0 is used to indicate arp_missed_max
+is unset (for modes that don't support the setting), however do not let it
+be set beyond the kernel permissible range for the modes that support it, set
+it to the kernel default of 2 instead.
+
+Do not apply or reapply the arp_missed_max setting when it is not
+supported.
+
+Signed-off-by: Pradyumn Rahar <pradyumn.rahar@oracle.com>
+(cherry picked from commit 921fe6ec68a1cffc18a81752f996578831702ad7)
+(cherry picked from commit 467a36c1c07834c0abde70dccf6b48e8d8e89f9c)
+---
+ src/core/devices/nm-device-bond.c        | 13 +++++++++----
+ src/libnm-core-impl/nm-setting-bond.c    | 16 +++++++++++++---
+ src/libnm-core-impl/tests/test-setting.c |  2 +-
+ src/libnm-platform/nm-linux-platform.c   | 10 +++++++---
+ src/libnm-platform/nm-platform.c         | 14 +++++++++++---
+ src/libnm-platform/nm-platform.h         |  1 +
+ 6 files changed, 42 insertions(+), 14 deletions(-)
+
+diff --git a/src/core/devices/nm-device-bond.c b/src/core/devices/nm-device-bond.c
+index 39e68e966b..06d41a19f9 100644
+--- a/src/core/devices/nm-device-bond.c
++++ b/src/core/devices/nm-device-bond.c
+@@ -52,11 +52,12 @@
+         NM_SETTING_BOND_OPTION_PACKETS_PER_SLAVE, NM_SETTING_BOND_OPTION_PRIMARY_RESELECT, \
+         NM_SETTING_BOND_OPTION_RESEND_IGMP, NM_SETTING_BOND_OPTION_USE_CARRIER,            \
+         NM_SETTING_BOND_OPTION_XMIT_HASH_POLICY, NM_SETTING_BOND_OPTION_NUM_GRAT_ARP,      \
+-        NM_SETTING_BOND_OPTION_PEER_NOTIF_DELAY, NM_SETTING_BOND_OPTION_ARP_MISSED_MAX
++        NM_SETTING_BOND_OPTION_PEER_NOTIF_DELAY
+ 
+-#define OPTIONS_REAPPLY_FULL                                     \
+-    OPTIONS_REAPPLY_SUBSET, NM_SETTING_BOND_OPTION_ACTIVE_SLAVE, \
+-        NM_SETTING_BOND_OPTION_ARP_IP_TARGET, NM_SETTING_BOND_OPTION_NS_IP6_TARGET
++#define OPTIONS_REAPPLY_FULL                                                        \
++    OPTIONS_REAPPLY_SUBSET, NM_SETTING_BOND_OPTION_ACTIVE_SLAVE,                    \
++        NM_SETTING_BOND_OPTION_ARP_IP_TARGET, NM_SETTING_BOND_OPTION_NS_IP6_TARGET, \
++        NM_SETTING_BOND_OPTION_ARP_MISSED_MAX
+ 
+ /*****************************************************************************/
+ 
+@@ -501,6 +502,8 @@ _platform_lnk_bond_init_from_setting(NMSettingBond *s_bond, NMPlatformLnkBond *p
+     props->lp_interval_has      = props->lp_interval != 1;
+     props->tlb_dynamic_lb_has   = NM_IN_SET(props->mode, NM_BOND_MODE_TLB, NM_BOND_MODE_ALB);
+     props->lacp_active_has      = NM_IN_SET(props->mode, NM_BOND_MODE_8023AD);
++    props->arp_missed_max_has =
++        !NM_IN_SET(props->mode, NM_BOND_MODE_TLB, NM_BOND_MODE_ALB, NM_BOND_MODE_8023AD);
+ }
+ 
+ static void
+@@ -907,6 +910,8 @@ reapply_connection(NMDevice *device, NMConnection *con_old, NMConnection *con_ne
+     set_bond_arp_ip_targets(device, s_bond);
+ 
+     set_bond_attrs_or_default(device, s_bond, NM_MAKE_STRV(OPTIONS_REAPPLY_SUBSET));
++    if (!NM_IN_SET(mode, NM_BOND_MODE_TLB, NM_BOND_MODE_ALB, NM_BOND_MODE_8023AD))
++        set_bond_attr_or_default(device, s_bond, NM_SETTING_BOND_OPTION_ARP_MISSED_MAX);
+ 
+     _balance_slb_setup(self, con_new);
+ }
+diff --git a/src/libnm-core-impl/nm-setting-bond.c b/src/libnm-core-impl/nm-setting-bond.c
+index 7204df4828..6e39015935 100644
+--- a/src/libnm-core-impl/nm-setting-bond.c
++++ b/src/libnm-core-impl/nm-setting-bond.c
+@@ -197,7 +197,7 @@ static NM_UTILS_STRING_TABLE_LOOKUP_STRUCT_DEFINE(
+      {"any", NM_BOND_OPTION_TYPE_BOTH, 0, 1, _option_default_strv_arp_all_targets}},
+     {NM_SETTING_BOND_OPTION_ARP_INTERVAL, {"0", NM_BOND_OPTION_TYPE_INT, 0, G_MAXINT}},
+     {NM_SETTING_BOND_OPTION_ARP_IP_TARGET, {"", NM_BOND_OPTION_TYPE_IP}},
+-    {NM_SETTING_BOND_OPTION_ARP_MISSED_MAX, {"0", NM_BOND_OPTION_TYPE_INT, 0, 255}},
++    {NM_SETTING_BOND_OPTION_ARP_MISSED_MAX, {"2", NM_BOND_OPTION_TYPE_INT, 0, 255}},
+     {NM_SETTING_BOND_OPTION_ARP_VALIDATE,
+      {"none", NM_BOND_OPTION_TYPE_BOTH, 0, 6, _option_default_strv_arp_validate}},
+     {NM_SETTING_BOND_OPTION_BALANCE_SLB, {"0", NM_BOND_OPTION_TYPE_INT, 0, 1}},
+@@ -364,6 +364,10 @@ _bond_get_option_normalized(NMSettingBond *self, const char *option, gboolean ge
+                 /* balance-slb implies vlan+srcmac */
+                 return "5";
+             }
++        } else if (nm_streq(option, NM_SETTING_BOND_OPTION_ARP_MISSED_MAX)) {
++            value = _bond_get_option(self, NM_SETTING_BOND_OPTION_ARP_MISSED_MAX) ?: "0";
++            if (nm_streq(value, "0"))
++                value = _bond_get_option_default(self, option);
+         } else
+             value = _bond_get_option(self, option);
+ 
+@@ -894,13 +898,16 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
+ 
+     miimon       = _atoi(_bond_get_option_or_default(self, NM_SETTING_BOND_OPTION_MIIMON));
+     arp_interval = _atoi(_bond_get_option_or_default(self, NM_SETTING_BOND_OPTION_ARP_INTERVAL));
+-    arp_missed_max =
+-        _atoi(_bond_get_option_or_default(self, NM_SETTING_BOND_OPTION_ARP_MISSED_MAX));
+     num_grat_arp = _atoi(_bond_get_option_or_default(self, NM_SETTING_BOND_OPTION_NUM_GRAT_ARP));
+     num_unsol_na = _atoi(_bond_get_option_or_default(self, NM_SETTING_BOND_OPTION_NUM_UNSOL_NA));
+     peer_notif_delay =
+         _atoi(_bond_get_option_or_default(self, NM_SETTING_BOND_OPTION_PEER_NOTIF_DELAY));
+ 
++    /* "0" is an invalid value in the kernel, but we used to accept it to indicate "default value".
++     * Keep accepting "0" as a valid value, although we'll apply a different value, actually.
++     * Bond modes that don't accept arp_missed_max must just ignore the "0" value, too. */
++    arp_missed_max = _atoi(_bond_get_option(self, NM_SETTING_BOND_OPTION_ARP_MISSED_MAX) ?: "0");
++
+     /* Option restrictions:
+      *
+      * arp_interval conflicts [ alb, tlb ]
+@@ -950,6 +957,9 @@ verify(NMSetting *setting, NMConnection *connection, GError **error)
+             g_prefix_error(error, "%s.%s: ", NM_SETTING_BOND_SETTING_NAME, NM_SETTING_BOND_OPTIONS);
+             return FALSE;
+         }
++    }
++
++    if (NM_IN_SET(bond_mode, NM_BOND_MODE_TLB, NM_BOND_MODE_ALB, NM_BOND_MODE_8023AD)) {
+         if (arp_missed_max > 0) {
+             g_set_error(error,
+                         NM_CONNECTION_ERROR,
+diff --git a/src/libnm-core-impl/tests/test-setting.c b/src/libnm-core-impl/tests/test-setting.c
+index 13d9518936..875d0a1127 100644
+--- a/src/libnm-core-impl/tests/test-setting.c
++++ b/src/libnm-core-impl/tests/test-setting.c
+@@ -5495,7 +5495,7 @@ test_bond_meta(void)
+     _A(_nm_setting_bond_opt_value_as_u16, set, NM_SETTING_BOND_OPTION_AD_ACTOR_SYS_PRIO, 0, EINVAL);
+     _A(_nm_setting_bond_opt_value_as_u16, set, NM_SETTING_BOND_OPTION_AD_USER_PORT_KEY, 0, EINVAL);
+     _A(_nm_setting_bond_opt_value_as_u8, set, NM_SETTING_BOND_OPTION_NUM_GRAT_ARP, 1, 0);
+-    _A(_nm_setting_bond_opt_value_as_u8, set, NM_SETTING_BOND_OPTION_ARP_MISSED_MAX, 0, 0);
++    _A(_nm_setting_bond_opt_value_as_u8, set, NM_SETTING_BOND_OPTION_ARP_MISSED_MAX, 2, 0);
+     _A(_nm_setting_bond_opt_value_as_u8, set, NM_SETTING_BOND_OPTION_ALL_SLAVES_ACTIVE, 0, 0);
+     _A(_nm_setting_bond_opt_value_as_intbool, set, NM_SETTING_BOND_OPTION_USE_CARRIER, 1, 0);
+     _A(_nm_setting_bond_opt_value_as_intbool,
+diff --git a/src/libnm-platform/nm-linux-platform.c b/src/libnm-platform/nm-linux-platform.c
+index 93639e284c..d3d330ff5e 100644
+--- a/src/libnm-platform/nm-linux-platform.c
++++ b/src/libnm-platform/nm-linux-platform.c
+@@ -1765,8 +1765,12 @@ _parse_lnk_bond(const char *kind, struct nlattr *info_data)
+         props->num_grat_arp = nla_get_u8(tb[IFLA_BOND_NUM_PEER_NOTIF]);
+     if (tb[IFLA_BOND_ALL_PORTS_ACTIVE])
+         props->all_ports_active = nla_get_u8(tb[IFLA_BOND_ALL_PORTS_ACTIVE]);
+-    if (tb[IFLA_BOND_MISSED_MAX])
+-        props->arp_missed_max = nla_get_u8(tb[IFLA_BOND_MISSED_MAX]);
++    if (tb[IFLA_BOND_MISSED_MAX]) {
++        props->arp_missed_max     = nla_get_u8(tb[IFLA_BOND_MISSED_MAX]);
++        props->arp_missed_max_has = TRUE;
++    } else {
++        props->arp_missed_max_has = FALSE;
++    }
+     if (tb[IFLA_BOND_MIN_LINKS])
+         props->min_links = nla_get_u32(tb[IFLA_BOND_MIN_LINKS]);
+     if (tb[IFLA_BOND_LP_INTERVAL])
+@@ -5101,7 +5105,7 @@ _nl_msg_new_link_set_linkinfo(struct nl_msg *msg, NMLinkType link_type, gconstpo
+                     &props->ad_actor_system);
+         if (props->ad_select)
+             NLA_PUT_U8(msg, IFLA_BOND_AD_SELECT, props->ad_select);
+-        if (props->arp_missed_max)
++        if (props->arp_missed_max_has)
+             NLA_PUT_U8(msg, IFLA_BOND_MISSED_MAX, props->arp_missed_max);
+ 
+         NLA_PUT_U8(msg, IFLA_BOND_ALL_PORTS_ACTIVE, props->all_ports_active);
+diff --git a/src/libnm-platform/nm-platform.c b/src/libnm-platform/nm-platform.c
+index f44ca6a1d8..a1019c779a 100644
+--- a/src/libnm-platform/nm-platform.c
++++ b/src/libnm-platform/nm-platform.c
+@@ -6387,6 +6387,7 @@ nm_platform_lnk_bond_to_string(const NMPlatformLnkBond *lnk, char *buf, gsize le
+     char sbuf_resend_igmp[30];
+     char sbuf_lp_interval[30];
+     char sbuf_tlb_dynamic_lb[30];
++    char sbuf_arp_missed_max[30];
+     int  i;
+ 
+     if (!nm_utils_to_string_buffer_init_null(lnk, &buf, &len))
+@@ -6417,7 +6418,7 @@ nm_platform_lnk_bond_to_string(const NMPlatformLnkBond *lnk, char *buf, gsize le
+         " xmit_hash_policy %u"
+         " num_gray_arp %u"
+         " all_ports_active %u"
+-        " arp_missed_max %u"
++        "%s" /* arp_missed_max %u */
+         " lacp_rate %u"
+         "%s" /* lacp_active */
+         " ad_select %u"
+@@ -6469,7 +6470,12 @@ nm_platform_lnk_bond_to_string(const NMPlatformLnkBond *lnk, char *buf, gsize le
+         lnk->xmit_hash_policy,
+         lnk->num_grat_arp,
+         lnk->all_ports_active,
+-        lnk->arp_missed_max,
++        lnk->arp_missed_max_has || lnk->arp_missed_max != 0
++            ? nm_sprintf_buf(sbuf_arp_missed_max,
++                             " arp_missed_max%s %u",
++                             !lnk->arp_missed_max_has ? "?" : "",
++                             (int) lnk->arp_missed_max)
++            : "",
+         lnk->lacp_rate,
+         lnk->lacp_active_has || lnk->lacp_active != 0
+             ? nm_sprintf_buf(sbuf_lacp_active,
+@@ -8398,7 +8404,8 @@ nm_platform_lnk_bond_hash_update(const NMPlatformLnkBond *obj, NMHashState *h)
+                                               obj->tlb_dynamic_lb,
+                                               obj->tlb_dynamic_lb_has,
+                                               obj->updelay_has,
+-                                              obj->use_carrier));
++                                              obj->use_carrier,
++                                              obj->arp_missed_max_has));
+ 
+     nm_hash_update(h, obj->arp_ip_target, obj->arp_ip_targets_num * sizeof(obj->arp_ip_target[0]));
+     nm_hash_update(h, obj->ns_ip6_target, obj->ns_ip6_targets_num * sizeof(obj->ns_ip6_target[0]));
+@@ -8476,6 +8483,7 @@ nm_platform_lnk_bond_cmp(const NMPlatformLnkBond *a, const NMPlatformLnkBond *b)
+     NM_CMP_FIELD_BOOL(a, b, tlb_dynamic_lb_has);
+     NM_CMP_FIELD_BOOL(a, b, updelay_has);
+     NM_CMP_FIELD_BOOL(a, b, use_carrier);
++    NM_CMP_FIELD_BOOL(a, b, arp_missed_max_has);
+ 
+     return 0;
+ }
+diff --git a/src/libnm-platform/nm-platform.h b/src/libnm-platform/nm-platform.h
+index 1d01e230b4..7881d13cf4 100644
+--- a/src/libnm-platform/nm-platform.h
++++ b/src/libnm-platform/nm-platform.h
+@@ -833,6 +833,7 @@ typedef struct {
+     bool            tlb_dynamic_lb_has : 1;
+     bool            updelay_has : 1;
+     bool            use_carrier : 1;
++    bool            arp_missed_max_has : 1;
+ } _nm_alignas(NMPlatformObject) NMPlatformLnkBond;
+ 
+ typedef struct {
+-- 
+2.54.0
+
