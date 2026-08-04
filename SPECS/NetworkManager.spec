@@ -7,7 +7,7 @@
 %global real_version 1.56.0
 %global git_tag_version 1.56.0
 %global rpm_version %{real_version}
-%global release_version 1
+%global release_version 2
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -189,6 +189,7 @@ Source9: readme-ifcfg-rh-migrated.txt
 
 # Bugfixes that are only relevant until next rebase of the package.
 # Patch1001: 1001-some.patch
+Patch1001: 1001-The-valid-range-of-arp_missed_max-according-to-the-k.patch
 
 Requires(post): systemd
 Requires(post): systemd-udev
@@ -1087,6 +1088,9 @@ fi
 
 
 %changelog
+* Thu Jul 16 2026 Rahul Rajesh <rrajesh@redhat.com> - 1:1.56.0-2
+- Fix arp_missed_max error on 802.3ad bond reapply (RHEL-211105)
+
 * Fri Feb 13 2026 Vladimír Beneš <vbenes@redhat.com> - 1:1.56.0-1
 - Update to 1.56.0
 
