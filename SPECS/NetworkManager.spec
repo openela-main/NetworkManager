@@ -6,7 +6,7 @@
 %global epoch_version 1
 %global real_version 1.40.16
 %global rpm_version %{real_version}
-%global release_version 20
+%global release_version 21
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -215,6 +215,8 @@ Patch1016: 1016-vpn-place-gateway-route-to-table-defined-in-ipvx-route-table-rhe
 Patch1017: 1017-vpn-fix-routing-rules-support-in-vpn-conenctions-rhel-73052.patch
 Patch1018: 1018-cloud-setup-azure-ensure-that-primary-address-is-pla-rhel-69462.patch
 Patch1019: 1019-device-dont-disable-IPv6-in-stage3-on-reapply-91479.patch
+Patch1020: 1020-libnm-sd-shared-reject-urls-containing-unexpected-ch.patch
+Patch1021: 1021-dhcp-dhclient-validate-hostname-before-pasting-it-in.patch
 
 Requires(post): systemd
 %if 0%{?fedora} || 0%{?rhel} >= 8
@@ -1250,6 +1252,9 @@ fi
 
 
 %changelog
+* Thu Jul 2 2026 Ján Václav <jvaclav@redhat.com> - 1:1.40.16-21
+- Fix CVE-2026-10805 (RHEL-191622)
+
 * Fri Aug 15 2025 Vladimír Beneš <vbenes@redhat.com> - 1:1.40.16-20
 - device: don't disable IPv6 in stage3 on reapply (RHEL-91479)
  

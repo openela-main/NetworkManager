@@ -1,0 +1,76 @@
+From 61bc3385dc726e4aae84c5f5a2231f065d8dd86d Mon Sep 17 00:00:00 2001
+From: Jan Vaclav <jvaclav@redhat.com>
+Date: Mon, 8 Jun 2026 13:05:33 +0200
+Subject: [PATCH 1/2] libnm-sd-shared: reject urls containing unexpected
+ characters
+
+_http_url_is_valid() only rejected non-ASCII bytes (>= 0x80), but
+accepted control characters, double quotes, and backslashes. These
+characters can cause injection issues when the URL is pasted into
+configuration files that interpret them as metacharacters (e.g. quoted
+strings in dhclient.conf).
+
+Reject control characters (< 0x20), double quotes, and backslashes in
+addition to non-ASCII bytes.
+
+(cherry picked from commit 5326760073c06157652b7e0d0865ada2eb0e393b)
+(cherry picked from commit ee4421b7250a996911a0c361e5d1fbd4058fa852)
+(cherry picked from commit 8d1fac7f656b1854fa10780fece7dbcadf50cc50)
+---
+ src/libnm-systemd-shared/nm-sd-utils-shared.c | 23 +++++++++++++++----
+ 1 file changed, 19 insertions(+), 4 deletions(-)
+
+diff --git a/src/libnm-systemd-shared/nm-sd-utils-shared.c b/src/libnm-systemd-shared/nm-sd-utils-shared.c
+index dad21596cf..b51faebcf8 100644
+--- a/src/libnm-systemd-shared/nm-sd-utils-shared.c
++++ b/src/libnm-systemd-shared/nm-sd-utils-shared.c
+@@ -53,6 +53,20 @@ nm_sd_dns_name_normalize(const char *s)
+ 
+ /*****************************************************************************/
+ 
++static gboolean
++_http_url_is_valid_char(char ch)
++{
++    if (g_ascii_isalnum(ch))
++        return TRUE;
++
++    /* Allow symbols which are allowed by the URL standard, or unlikely
++     * to be problematic in this scenario. */
++    if (strchr(":/%=;&+|^`-._~?#<>{}[]@!$'()*, ", ch) != NULL)
++        return TRUE;
++
++    return FALSE;
++}
++
+ static gboolean
+ _http_url_is_valid(const char *url, gboolean only_https)
+ {
+@@ -69,7 +83,7 @@ _http_url_is_valid(const char *url, gboolean only_https)
+     if (!url[0])
+         return FALSE;
+ 
+-    return !NM_STRCHAR_ANY(url, ch, (guchar) ch >= 128u);
++    return NM_STRCHAR_ALL(url, ch, _http_url_is_valid_char(ch));
+ }
+ 
+ gboolean
+@@ -82,12 +96,13 @@ nm_sd_http_url_is_valid_https(const char *url)
+      * assert with http_url_is_valid() that the argument is valid. We thus must make
+      * sure to only pass URLs that are valid according to http_url_is_valid().
+      *
+-     * This is given, because our nm_sd_http_url_is_valid_https() is more strict
+-     * than http_url_is_valid().
++     * This is given, because our nm_sd_http_url_is_valid_https() is more restrictive
++     * than http_url_is_valid(). The assertion below checks that anything we accept,
++     * systemd must also accept.
+      *
+      * We only must make sure that this is also correct in the future, when we
+      * re-import systemd code. */
+-    nm_assert(_http_url_is_valid(url, FALSE) == http_url_is_valid(url));
++    nm_assert(!_http_url_is_valid(url, FALSE) || http_url_is_valid(url));
+     return _http_url_is_valid(url, TRUE);
+ }
+ 
+-- 
+2.54.0
+

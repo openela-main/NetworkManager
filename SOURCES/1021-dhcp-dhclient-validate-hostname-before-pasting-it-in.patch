@@ -1,0 +1,56 @@
+From f5919600b1e949d88c8225b4a86c70a0c34aa506 Mon Sep 17 00:00:00 2001
+From: Jan Vaclav <jvaclav@redhat.com>
+Date: Tue, 9 Jun 2026 11:28:15 +0200
+Subject: [PATCH 2/2] dhcp/dhclient: validate hostname before pasting it into
+ dhclient config
+
+nm_sd_dns_name_is_valid() accepts double quotes, which could break out
+of the quoted string context in dhclient.conf.
+
+Add a check in create_dhclient_config() that rejects hostnames
+containing characters unsafe for dhclient.conf.
+
+(cherry picked from commit ca571c6819e01651be2197abff8eafff22ef80ef)
+(cherry picked from commit 753f3ae3d16889a933083b4f1c242eaddce17763)
+(cherry picked from commit 32a370d177219b96f8059208e5dd1a0ba80d668d)
+---
+ src/core/dhcp/nm-dhcp-dhclient.c | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/src/core/dhcp/nm-dhcp-dhclient.c b/src/core/dhcp/nm-dhcp-dhclient.c
+index e4f40d7cb0..dba184b758 100644
+--- a/src/core/dhcp/nm-dhcp-dhclient.c
++++ b/src/core/dhcp/nm-dhcp-dhclient.c
+@@ -271,6 +271,16 @@ find_existing_config(NMDhcpDhclient *self, int addr_family, const char *iface, c
+     return NULL;
+ }
+ 
++static gboolean
++_dhclient_hostname_is_valid(const char *hostname)
++{
++    for (const char *p = hostname; *p; p++) {
++        if (!g_ascii_isalnum(*p) && !NM_IN_SET(*p, '-', '.'))
++            return FALSE;
++    }
++    return TRUE;
++}
++
+ /* NM provides interface-specific options; thus the same dhclient config
+  * file cannot be used since DHCP transactions can happen in parallel.
+  * Since some distros don't have default per-interface dhclient config files,
+@@ -298,6 +308,12 @@ create_dhclient_config(NMDhcpDhclient     *self,
+ 
+     g_return_val_if_fail(iface != NULL, NULL);
+ 
++    if (hostname && !_dhclient_hostname_is_valid(hostname)) {
++        _LOGW("hostname '%s' contains unsafe characters for dhclient config, will be ignored",
++              hostname);
++        hostname = NULL;
++    }
++
+     new = g_strdup_printf(NMSTATEDIR "/dhclient%s-%s.conf",
+                           _addr_family_to_path_part(addr_family),
+                           iface);
+-- 
+2.54.0
+
