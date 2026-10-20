@@ -7,7 +7,7 @@
 %global real_version 1.56.0
 %global git_tag_version 1.56.0
 %global rpm_version %{real_version}
-%global release_version 2
+%global release_version 3
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -190,6 +190,7 @@ Source9: readme-ifcfg-rh-migrated.txt
 # Bugfixes that are only relevant until next rebase of the package.
 # Patch1001: 1001-some.patch
 Patch1001: 1001-The-valid-range-of-arp_missed_max-according-to-the-k.patch
+Patch1002: 1002-core-add-persistent-set-managed-api.patch
 
 Requires(post): systemd
 Requires(post): systemd-udev
