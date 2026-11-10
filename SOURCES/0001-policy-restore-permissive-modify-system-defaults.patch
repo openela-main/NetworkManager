@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Josephine Pfeiffer <josie@redhat.com>
+Date: Thu, 9 Jul 2026 00:00:00 +0200
+Subject: [PATCH] policy: restore permissive modify.system defaults
+
+RHEL 10 previously built NetworkManager with modify_system=true, which
+allowed local console users to modify system connections without
+authentication. Upstream 1.58 removed that build option and now defaults
+the action to auth_admin_keep.
+
+Keep the existing RHEL 10 behavior for minor-release compatibility.
+---
+ data/org.freedesktop.NetworkManager.policy.in | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/data/org.freedesktop.NetworkManager.policy.in b/data/org.freedesktop.NetworkManager.policy.in
+index c6797f47d2..548f69982a 100644
+--- a/data/org.freedesktop.NetworkManager.policy.in
++++ b/data/org.freedesktop.NetworkManager.policy.in
+@@ -117,8 +117,8 @@
+     <message>System policy prevents modification of network settings for all users</message>
+     <defaults>
+       <allow_any>auth_admin_keep</allow_any>
+-      <allow_inactive>auth_admin_keep</allow_inactive>
+-      <allow_active>auth_admin_keep</allow_active>
++      <allow_inactive>yes</allow_inactive>
++      <allow_active>yes</allow_active>
+     </defaults>
+   </action>
+ 
+-- 
+2.52.0

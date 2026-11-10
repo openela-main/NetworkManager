@@ -1,15 +1,20 @@
+Name:    NetworkManager
+Summary: Network connection manager and user applications
+License: GPL-2.0-or-later AND LGPL-2.1-or-later
+URL:     https://networkmanager.dev/
+Group:   System Environment/Base
+
+Epoch:   1
+Version: 1.58.0
+Release: 3%{?dist}
+
+###############################################################################
+
 %global wpa_supplicant_version 1:1.1
 
 %global ppp_version %(pkg-config --modversion pppd 2>/dev/null || sed -n 's/^#define\\s*VERSION\\s*"\\([^\\s]*\\)"$/\\1/p' %{_includedir}/pppd/patchlevel.h 2>/dev/null | grep . || echo bad)
 %global glib2_version %(pkg-config --modversion glib-2.0 2>/dev/null || echo bad)
 
-%global epoch_version 1
-%global real_version 1.56.0
-%global git_tag_version 1.56.0
-%global rpm_version %{real_version}
-%global release_version 3
-%global snapshot %{nil}
-%global git_sha %{nil}
 %global bcond_default_debug 0
 %global bcond_default_lto %{nil}
 %global bcond_default_test 0
@@ -24,27 +29,11 @@
 
 %global _hardened_build 1
 
-%if "x%{?snapshot}" != "x"
-%global snapshot_dot .%{snapshot}
-%endif
-%if "x%{?git_sha}" != "x"
-%global git_sha_dot .%{git_sha}
-%endif
-
-%global snap %{?snapshot_dot}%{?git_sha_dot}
-
-%global real_version_major %(printf '%s' '%{real_version}' | sed -n 's/^\\([1-9][0-9]*\\.[0-9][0-9]*\\)\\.[0-9][0-9]*$/\\1/p')
-
 %global systemd_units NetworkManager.service NetworkManager-wait-online.service NetworkManager-dispatcher.service nm-priv-helper.service
 
 %global systemd_units_cloud_setup nm-cloud-setup.service nm-cloud-setup.timer
 
 ###############################################################################
-%if 0%{?fedora} > 40 || 0%{?rhel} >= 10
-%bcond_with dhclient
-%else
-%bcond_without dhclient
-%endif
 %bcond_without adsl
 %bcond_without bluetooth
 %bcond_without wwan
@@ -98,7 +87,13 @@
 %else
 %bcond_without iwd
 %endif
-
+%bcond_without polkit_noauth_group
+%ifarch %{ix86}
+# there is no bpftool in i686
+%bcond_with clat
+%else
+%bcond_without clat
+%endif
 ###############################################################################
 
 %global dbus_version 1.9.18
@@ -145,17 +140,6 @@
 %bcond_with ifcfg_migrate
 %endif
 
-%if 0%{?fedora}
-# Although eBPF would be available on Fedora's kernel, it seems
-# we often get SELinux denials (rh#1651654). But even aside them,
-# bpf(BPF_MAP_CREATE, ...) randomly fails with EPERM. That might
-# be related to `ulimit -l`. Anyway, this is not usable at the
-# moment.
-%global ebpf_enabled "no"
-%else
-%global ebpf_enabled "no"
-%endif
-
 # Fedora 33 enables LTO by default by setting CFLAGS="-flto -ffat-lto-objects".
 # However, we also require "-flto -flto-partition=none", so disable Fedora's
 # default and use our configure option --with-lto instead.
@@ -163,16 +147,7 @@
 
 ###############################################################################
 
-Name: NetworkManager
-Summary: Network connection manager and user applications
-Epoch: %{epoch_version}
-Version: %{rpm_version}
-Release: %{release_version}%{?snap}%{?dist}
-Group: System Environment/Base
-License: GPL-2.0-or-later AND LGPL-2.1-or-later
-URL: https://networkmanager.dev/
-
-Source: https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/releases/%{git_tag_version}/downloads/%{name}-%{real_version}.tar.xz
+Source: https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/releases/%{version_no_tilde}/downloads/%{name}-%{version_no_tilde}.tar.xz
 Source1: NetworkManager.conf
 Source2: 00-server.conf
 Source4: 20-connectivity-fedora.conf
@@ -181,29 +156,22 @@ Source6: 22-wifi-mac-addr.conf
 Source7: 70-nm-connectivity.conf
 Source8: readme-ifcfg-rh.txt
 Source9: readme-ifcfg-rh-migrated.txt
+Source10: 24-clat-auto.conf
 
-# RHEL downstream patches that change behavior from upstream.
-# These are not bugfixes, hence they are also relevant after
-# the next rebase of the source tarball.
-# Patch0001: 0001-some.patch
-
-# Bugfixes that are only relevant until next rebase of the package.
-# Patch1001: 1001-some.patch
-Patch1001: 1001-The-valid-range-of-arp_missed_max-according-to-the-k.patch
-Patch1002: 1002-core-add-persistent-set-managed-api.patch
+Patch0001: 0001-policy-restore-permissive-modify-system-defaults.patch
+Patch0002: 0002-dhcp-revert-strict-RFC-3442-compliance-for-option-121.patch
 
 Requires(post): systemd
-Requires(post): systemd-udev
-Requires(post): /usr/sbin/update-alternatives
 Requires(preun): systemd
-Requires(preun): /usr/sbin/update-alternatives
 Requires(postun): systemd
 
 Requires: dbus >= %{dbus_version}
 Requires: glib2 >= %{glib2_version}
 Requires: %{name}-libnm%{?_isa} = %{epoch}:%{version}-%{release}
 
-Recommends: iputils
+%if %{with clat}
+Requires: libbpf
+%endif
 
 %if 0%{?rhel} == 8
 # Older libndp versions use select() (rh#1933041). On well known distros,
@@ -252,7 +220,7 @@ Conflicts: NetworkManager-dispatcher-routing-rules <= 1:1.47.5-3
 %endif
 
 BuildRequires: gcc
-BuildRequires: libtool
+BuildRequires: clang
 BuildRequires: pkgconfig
 BuildRequires: meson
 BuildRequires: gettext-devel >= 0.19.8
@@ -307,6 +275,10 @@ BuildRequires: firewalld-filesystem
 BuildRequires: iproute
 BuildRequires: iproute-tc
 BuildRequires: libnvme-devel >= 1.5
+%if %{with clat}
+BuildRequires: libbpf-devel
+BuildRequires: bpftool
+%endif
 
 Provides: %{name}-dispatcher%{?_isa} = %{epoch}:%{version}-%{release}
 
@@ -575,6 +547,8 @@ Group: System Environment/Base
 BuildArch: noarch
 Requires: NetworkManager
 Requires: /usr/bin/nmcli
+Requires(post): /usr/sbin/update-alternatives
+Requires(preun): /usr/sbin/update-alternatives
 Obsoletes: NetworkManager < %{obsoletes_initscripts_updown}
 
 %description initscripts-updown
@@ -585,7 +559,7 @@ Preferably use nmcli instead.
 
 
 %prep
-%autosetup -p1 -n NetworkManager-%{real_version}
+%autosetup -p1 -n NetworkManager-%{version_no_tilde}
 
 
 %build
@@ -597,11 +571,7 @@ Preferably use nmcli instead.
 %endif
 	-Dnft=%{_sbindir}/nft \
 	-Diptables=%{_sbindir}/iptables \
-%if %{with dhclient}
-	-Ddhclient=%{_sbindir}/dhclient \
-%else
-	-Ddhclient=no \
-%endif
+	-Dip6tables=%{_sbindir}/ip6tables \
 	-Ddhcpcd=no \
 	-Dcrypto=gnutls \
 %if %{with debug}
@@ -625,18 +595,19 @@ Preferably use nmcli instead.
 %endif
 %if %{with wifi}
 	-Dwifi=true \
-%if 0%{?fedora}
-	-Dwext=true \
-%else
-	-Dwext=false \
-%endif
 %else
 	-Dwifi=false \
 %endif
+	-Dwext=false \
 %if %{with iwd}
 	-Diwd=true \
 %else
 	-Diwd=false \
+%endif
+%if %{with clat}
+	-Dclat=true \
+%else
+	-Dclat=false \
 %endif
 %if %{with bluetooth}
 	-Dbluez5_dun=true \
@@ -674,22 +645,20 @@ Preferably use nmcli instead.
 	-Dselinux=true \
 	-Dpolkit=true  \
 	-Dconfig_auth_polkit_default=true \
-	-Dmodify_system=true \
+%if %{with polkit_noauth_group}
+	-Dpolkit_noauth_group=wheel \
+%endif
 	-Dconcheck=true \
 %if 0%{?fedora}
 	-Dlibpsl=true \
 %else
 	-Dlibpsl=false \
 %endif
-%if %{ebpf_enabled} != "yes"
-	-Debpf=false \
-%else
-	-Debpf=true \
-%endif
 	-Dsession_tracking=systemd \
 	-Dsuspend_resume=systemd \
 	-Dsystemdsystemunitdir=%{_unitdir} \
-	-Dsystem_ca_path=/etc/pki/tls/cert.pem \
+	-Dsystemdsystemgeneratordir=%{_systemdgeneratordir} \
+	-Dsystem_ca_path=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem \
 	-Ddbus_conf_dir=%{dbus_sys_dir} \
 	-Dtests=yes \
 	-Dvalgrind=no \
@@ -718,14 +687,7 @@ Preferably use nmcli instead.
 	-Dconfig_dns_rc_manager_default=%{dns_rc_manager_default} \
 	-Dconfig_logging_backend_default=journal
 
-# Limit number of jobs on ppc64 to prevent high RAM usage
-%ifarch ppc64le
-%global numjobs 4
-%else
-%global numjobs %{_smp_build_ncpus}
-%endif
-
-%meson_build -j %{numjobs}
+%meson_build
 
 %install
 %meson_install
@@ -746,6 +708,9 @@ cp %{SOURCE7} %{buildroot}%{_sysctldir}
 
 %if 0%{?fedora} >= 40
 cp %{SOURCE6} %{buildroot}%{nmlibdir}/conf.d/
+%endif
+%if 0%{?fedora} >= 45
+cp %{SOURCE10} %{buildroot}%{nmlibdir}/conf.d/
 %endif
 
 %if %{with ifcfg_warning}
@@ -768,6 +733,7 @@ rm -f %{buildroot}%{_libdir}/pppd/%{ppp_version}/*.la
 rm -f %{buildroot}%{nmplugindir}/*.la
 
 # Don't use the *-initrd.service files yet, wait dracut to support them
+rm -f %{buildroot}%{_systemdgeneratordir}/nm-initrd-generator.sh
 rm -f %{buildroot}%{_unitdir}/NetworkManager-config-initrd.service
 rm -f %{buildroot}%{_unitdir}/NetworkManager-initrd.service
 rm -f %{buildroot}%{_unitdir}/NetworkManager-wait-online-initrd.service
@@ -776,8 +742,8 @@ rm -f %{buildroot}%{_unitdir}/NetworkManager-wait-online-initrd.service
 find %{buildroot}%{_datadir}/gtk-doc -exec touch --reference meson.build '{}' \+
 
 %if 0%{?__debug_package} && ! 0%{?flatpak}
-mkdir -p %{buildroot}%{_prefix}/src/debug/NetworkManager-%{real_version}
-cp valgrind.suppressions %{buildroot}%{_prefix}/src/debug/NetworkManager-%{real_version}
+mkdir -p %{buildroot}%{_prefix}/src/debug/NetworkManager-%{version_no_tilde}
+cp valgrind.suppressions %{buildroot}%{_prefix}/src/debug/NetworkManager-%{version_no_tilde}
 %endif
 
 %if %{with ifcfg_rh}
@@ -859,8 +825,12 @@ fi
 
 
 %postun
-/usr/bin/udevadm control --reload-rules || :
-/usr/bin/udevadm trigger --subsystem-match=net || :
+# skip triggering if udevd isn't even accessible, e.g. containers or
+# rpm-ostree-based systems
+if [ -S /run/udev/control ]; then
+    /usr/bin/udevadm control --reload-rules || :
+    /usr/bin/udevadm trigger --subsystem-match=net || :
+fi
 %firewalld_reload
 
 %systemd_postun %{systemd_units}
@@ -894,6 +864,9 @@ fi
 %config(noreplace) %{_sysconfdir}/%{name}/NetworkManager.conf
 %if 0%{?fedora} >= 40
 %{nmlibdir}/conf.d/22-wifi-mac-addr.conf
+%endif
+%if 0%{?fedora} >= 45
+%{nmlibdir}/conf.d/24-clat-auto.conf
 %endif
 %ghost %{_sysconfdir}/%{name}/VPN
 %{_bindir}/nm-online
@@ -933,6 +906,9 @@ fi
 %{_datadir}/dbus-1/system-services/org.freedesktop.nm_dispatcher.service
 %{_datadir}/dbus-1/system-services/org.freedesktop.nm_priv_helper.service
 %{_datadir}/polkit-1/actions/*.policy
+%if %{with polkit_noauth_group}
+%{_datadir}/polkit-1/rules.d/org.freedesktop.NetworkManager.rules
+%endif
 %{_prefix}/lib/udev/rules.d/*.rules
 %{_prefix}/lib/firewalld/zones/nm-shared.xml
 # systemd stuff
@@ -1089,8 +1065,32 @@ fi
 
 
 %changelog
-* Thu Jul 16 2026 Rahul Rajesh <rrajesh@redhat.com> - 1:1.56.0-2
-- Fix arp_missed_max error on 802.3ad bond reapply (RHEL-211105)
+* Wed Sep 24 2026 Peter Rakšány <praksany@redhat.com> - 1:1.58.0-3
+- Revert strict RFC 3442 compliance for DHCP option 121 (RHEL-259235)
+
+* Mon Sep 22 2026 Peter Rakšány <praksany@redhat.com> - 1:1.58.0-2
+- Revert strict RFC 3442 compliance for DHCP option 121 (RHEL-259235)
+
+* Tue Jul 28 2026 Ján Václav <jvaclav@redhat.com> - 1:1.58.0-1
+- Update to 1.58.0 stable release (RHEL-182761)
+
+* Thu Jul 02 2026 Josephine Pfeiffer <josie@redhat.com> - 1:1.58~rc1-1
+- Update to 1.58-rc1 release
+- Add IPv6-mostly support with CLAT via a BPF program (RHEL-93551)
+- Keep permissive modify.system polkit defaults for RHEL 10 minor compatibility
+- Warn about gateways that are not directly reachable (RHEL-126543)
+- Fix suppressing DHCPv6 DNS servers with ipv6.ignore-auto-dns on reapply (RHEL-149149)
+- Fix sending DHCP release on bridge interfaces (RHEL-126455)
+- Allow selecting from available devices when creating profiles in nmtui (RHEL-129186)
+- Fix AVC error when running NetworkManager --print-config as systemd service (RHEL-140113)
+- Fix invalid default value of the bond arp_missed_max option (RHEL-182559)
+- Fix RPM scriptlet dependencies for udev-less container installs
+
+* Thu May 14 2026 Ján Václav <jvaclav@redhat.com> - 1:1.56.1-1
+- Update to 1.56.1
+- fix handling onlink route flag for ECMP routes (RHEL-1402)
+- Add Geneve support (RHEL-122042)
+- Add support for persistently un/managing devices (RHEL-142555)
 
 * Fri Feb 13 2026 Vladimír Beneš <vbenes@redhat.com> - 1:1.56.0-1
 - Update to 1.56.0
@@ -1222,7 +1222,7 @@ fi
 
 * Thu Aug 22 2024 Íñigo Huguet <ihuguet@redhat.com> - 1:1.48.10-1
 - Unblock the autoconnect for children when parent is available (RHEL-46904)
-- Fix crash produced by malformed LLDP package when debug logging (RHEL-46199)
+- Fix crash produced by malformed LLDP package when debug logging (RHEL-46203, CVE-2024-6501)
 - Support reapplying bridge-port VLANs (RHEL-26750)
 - Add small backoff time before resync (RHEL-29902)
 

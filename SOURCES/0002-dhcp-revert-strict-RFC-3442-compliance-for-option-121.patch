@@ -1,0 +1,93 @@
+From 6413a3182ee589f12432b9a76a79f98d7d882ac8 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Peter=20Rak=C5=A1=C3=A1ny?= <praksany@redhat.com>
+Date: Sun, 13 Sep 2026 14:48:04 +0200
+Subject: [PATCH] dhcp: revert strict RFC 3442 compliance for option 121
+
+RFC 3442 says the Router option (3) must be ignored whenever Classless
+Static Routes (121) is present. Some production DHCP servers send
+option 121 without a default route alongside a valid option 3, so
+strict compliance breaks connectivity in those enviroments.
+
+Revert to the previous lenient behavior and ignore only the Router
+option if Classless Static Routes actually contains a default route
+(0.0.0.0/0).
+
+Assisted-by: Claude Sonnet 4.5 <noreply@anthropic.com>
+---
+ src/core/dhcp/nm-dhcp-nettools.c | 25 ++++++++++++++++++-------
+ 1 file changed, 18 insertions(+), 7 deletions(-)
+
+diff --git a/src/core/dhcp/nm-dhcp-nettools.c b/src/core/dhcp/nm-dhcp-nettools.c
+index 5857006bb2..0adc3f5c4f 100644
+--- a/src/core/dhcp/nm-dhcp-nettools.c
++++ b/src/core/dhcp/nm-dhcp-nettools.c
+@@ -406,7 +406,8 @@ lease_parse_address_list(NDhcp4ClientLease       *lease,
+ }
+ 
+ static void
+-lease_parse_routes(NDhcp4ClientLease *lease,
++lease_parse_routes(NMDhcpNettools    *self,
++                   NDhcp4ClientLease *lease,
+                    NML3ConfigData    *l3cd,
+                    in_addr_t          lease_address,
+                    GHashTable        *options,
+@@ -418,6 +419,7 @@ lease_parse_routes(NDhcp4ClientLease *lease,
+     in_addr_t     gateway;
+     uint8_t       plen;
+     guint32       m;
++    gboolean      has_router_from_classless   = FALSE;
+     gboolean      has_classless               = FALSE;
+     guint32       default_route_metric_offset = 0;
+     const guint8 *l_data;
+@@ -459,7 +461,8 @@ lease_parse_routes(NDhcp4ClientLease *lease,
+             if (plen == 0) {
+                 /* if there are multiple default routes, we add them with differing
+                  * metrics. */
+-                m = default_route_metric_offset++;
++                m                         = default_route_metric_offset++;
++                has_router_from_classless = TRUE;
+             } else
+                 m = 0;
+ 
+@@ -537,10 +540,12 @@ lease_parse_routes(NDhcp4ClientLease *lease,
+                 continue;
+             }
+ 
+-            if (has_classless) {
+-                /* RFC 3442: if the DHCP server returns both a Classless Static Routes
+-                 * option and a Router option, the DHCP client MUST ignore the Router
+-                 * option. */
++            if (has_router_from_classless) {
++                /* If the DHCP server returns both a Classless Static Routes option and a
++                 * Router option, the DHCP client MUST ignore the Router option [RFC 3442].
++                 *
++                 * Be more lenient and ignore the Router option only if Classless Static
++                 * Routes contain a default gateway (as other DHCP backends do). */
+                 continue;
+             }
+ 
+@@ -560,6 +565,12 @@ lease_parse_routes(NDhcp4ClientLease *lease,
+                                           }));
+         }
+ 
++        if (has_classless && !has_router_from_classless && sbuf->len > 0) {
++            _LOGW("DHCP server configuration issue detected: classless static routes (option 121) "
++                  "present but without a default route, using router option (option 3) as "
++                  "fallback. The DHCP server should include a 0.0.0.0/0 route in option 121.");
++        }
++
+         _add_option(options, NM_DHCP_OPTION_DHCP4_ROUTER, nm_str_buf_get_str(sbuf));
+     }
+ }
+@@ -676,7 +687,7 @@ lease_to_ip4_config(NMDhcpNettools *self, NDhcp4ClientLease *lease, GError **err
+                                           v_inaddr);
+     }
+ 
+-    lease_parse_routes(lease, l3cd, lease_address, options, &sbuf);
++    lease_parse_routes(self, lease, l3cd, lease_address, options, &sbuf);
+ 
+     lease_parse_address_list(lease,
+                              l3cd,
+-- 
+2.55.0
+
