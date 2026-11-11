@@ -6,7 +6,7 @@ Group:   System Environment/Base
 
 Epoch:   1
 Version: 1.58.0
-Release: 3%{?dist}
+Release: 4%{?dist}
 
 ###############################################################################
 
@@ -160,6 +160,7 @@ Source10: 24-clat-auto.conf
 
 Patch0001: 0001-policy-restore-permissive-modify-system-defaults.patch
 Patch0002: 0002-dhcp-revert-strict-RFC-3442-compliance-for-option-121.patch
+Patch0003: 0003-core-802.1x-reject-ca-path-for-private-connections.patch
 
 Requires(post): systemd
 Requires(preun): systemd
@@ -1065,10 +1066,13 @@ fi
 
 
 %changelog
-* Wed Sep 24 2026 Peter Rakšány <praksany@redhat.com> - 1:1.58.0-3
+* Fri Oct 16 2026 Peter Rakšány <praksany@redhat.com> - 1:1.58.0-4
+- Reject CA directories on private 802.1X connections (RHEL-247680)
+
+* Thu Sep 24 2026 Peter Rakšány <praksany@redhat.com> - 1:1.58.0-3
 - Revert strict RFC 3442 compliance for DHCP option 121 (RHEL-259235)
 
-* Mon Sep 22 2026 Peter Rakšány <praksany@redhat.com> - 1:1.58.0-2
+* Tue Sep 22 2026 Peter Rakšány <praksany@redhat.com> - 1:1.58.0-2
 - Revert strict RFC 3442 compliance for DHCP option 121 (RHEL-259235)
 
 * Tue Jul 28 2026 Ján Václav <jvaclav@redhat.com> - 1:1.58.0-1
