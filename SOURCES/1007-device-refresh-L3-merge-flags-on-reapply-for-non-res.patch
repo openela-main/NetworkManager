@@ -1,0 +1,64 @@
+From cfc8ba399552b51adfa3cea6962960e20e3545e6 Mon Sep 17 00:00:00 2001
+From: Josephine Pfeiffer <josie@redhat.com>
+Date: Wed, 17 Jun 2026 10:25:09 +0200
+Subject: [PATCH 1007/1007] device: refresh L3 merge flags on reapply for
+ non-restarted sources
+
+Setting ipv6.ignore-auto-dns=yes (or ignore-auto-routes, never-default) and
+running reapply did not take effect: DHCPv6-provided DNS persisted until a
+full connection down/up.
+
+On reapply, check_and_reapply_connection() invalidates the per-device
+merge-flags cache, but the flags only reach NML3Cfg when an l3cd is
+re-registered via nm_l3cfg_add_config(). DHCPv4 restarts from stage3 and
+re-registers its l3cd, so IPv4 worked. DHCPv6 does not restart when the NDisc
+DHCP level is unchanged (_dev_ipdhcp6_set_dhcp_level() early-returns), so its
+l3cd kept stale merge flags and the cached lease's DNS was merged in.
+
+Re-register the active l3cds during reapply so refreshed merge flags reach
+l3cfg for sources that are not restarted. nm_l3cfg_add_config() is an upsert
+that only updates merge flags on the existing entry; addresses are unchanged,
+so no address/route flap or re-ACD occurs.
+
+(cherry picked from commit b4ff1df28696d344f8f0c3d2d3d9f63781807939)
+(cherry picked from commit 64b4e80001311923258610dafd440dc738d2a348)
+---
+ NEWS                         | 4 ++++
+ src/core/devices/nm-device.c | 6 ++++++
+ 2 files changed, 10 insertions(+)
+
+diff --git a/NEWS b/NEWS
+index 112d76839b..d7abdcffd5 100644
+--- a/NEWS
++++ b/NEWS
+@@ -7,6 +7,10 @@ Overview of changes since NetworkManager-1.54.3
+ * Allow persisting the managed state across reboots from nmcli and the D-Bus API.
+ * Allow changing the device's administrative state in the kernel at the same
+   time as a change to the managed state from nmcli and the D-Bus API.
++* Fix reapply not honoring the ipv6.ignore-auto-dns, ipv6.ignore-auto-routes
++  and ipv6.never-default properties when DHCPv6 was not restarted (for example
++  when the IPv6 DNS came from a DHCPv6 lease), so that DHCPv6-provided DNS and
++  routes are now correctly suppressed on reapply without a connection restart.
+ 
+ ===============================================
+ NetworkManager-1.54.3
+diff --git a/src/core/devices/nm-device.c b/src/core/devices/nm-device.c
+index 0d7100a08e..1eb68bf988 100644
+--- a/src/core/devices/nm-device.c
++++ b/src/core/devices/nm-device.c
+@@ -14557,6 +14557,12 @@ check_and_reapply_connection(NMDevice            *self,
+ 
+         reactivate_proxy_config(self);
+ 
++        /* Reapply may have changed the per-device L3 merge flags (ignore-auto-dns,
++         * ignore-auto-routes, never-default). Re-register the active l3cds so the
++         * refreshed flags reach l3cfg even for sources that are not restarted on
++         * reapply (e.g. DHCPv6 when the NDisc DHCP level is unchanged). */
++        _dev_l3_register_l3cds(self, priv->l3cfg, TRUE, FALSE);
++
+         nm_device_l3cfg_commit(
+             self,
+             NM_FLAGS_HAS(reapply_flags, NM_DEVICE_REAPPLY_FLAGS_PRESERVE_EXTERNAL_IP)
+-- 
+2.54.0
+

@@ -4,10 +4,10 @@
 %global glib2_version %(pkg-config --modversion glib-2.0 2>/dev/null || echo bad)
 
 %global epoch_version 1
-%global real_version 1.54.3
-%global git_tag_version 1.54.3
+%global real_version 1.54.4
+%global git_tag_version 1.54.4
 %global rpm_version %{real_version}
-%global release_version 5
+%global release_version 3
 %global snapshot %{nil}
 %global git_sha %{nil}
 %global bcond_default_debug 0
@@ -190,10 +190,13 @@ Patch0001: 0001-revert-change-default-value-for-ipv4.dad-timeout-from-0-to-200ms
 
 # Bugfixes that are only relevant until next rebase of the package.
 # Patch1001: 1001-some.patch
-Patch1001: 1001-device-set-bridge-in-supplicant-for-802.1X-ethernet-.patch
-Patch1002: 1002-The-valid-range-of-arp_missed_max-according-to-the-k.patch
-Patch1003: 1003-libnm-sd-shared-reject-urls-containing-unexpected-ch.patch
-Patch1004: 1004-dhcp-dhclient-validate-hostname-before-pasting-it-in.patch
+Patch1001: 1001-The-valid-range-of-arp_missed_max-according-to-the-k.patch
+Patch1002: 1002-libnm-sd-shared-reject-urls-containing-unexpected-ch.patch
+Patch1003: 1003-dhcp-dhclient-validate-hostname-before-pasting-it-in.patch
+Patch1004: 1004-device-cleanup-DHCP-before-devices-removed.patch
+Patch1005: 1005-manager-Ensure-DHCP-interface-delete-first-when-daem.patch
+Patch1006: 1006-core-use-GDir-to-avoid-libgvfs-loading.patch
+Patch1007: 1007-device-refresh-L3-merge-flags-on-reapply-for-non-res.patch
 
 Requires(post): systemd
 Requires(post): systemd-udev
@@ -1091,14 +1094,24 @@ fi
 
 
 %changelog
-* Wed Jul 22 2026 Ján Václav <jvaclav@redhat.com> - 1:1.54.3-5
-- Fix CVE-2026-10805 (RHEL-191624)
+* Mon Aug 24 2026 Rahul Rajesh <rrajesh@redhat.com> - 1:1.54.4-3
+- Fix DHCP release on OVS bridge interface (RHEL-157393)
+- Fix avc error on print-config (RHEL-247438)
+- Fix ipv6.ignore-auto-dns=yes fails to suppress DHCPv6 DNS after reapply (RHEL-247440)
 
-* Tue Jun 9 2026 Rahul Rajesh <rrajesh@redhat.com> - 1:1.54.3-4
-- Fix arp_missed_max error on 802.3ad bond reapply (RHEL-182629)
+* Thu Jul 2 2026 Ján Václav <jvaclav@redhat.com> - 1:1.54.4-2
+- Fix CVE-2026-10805 (RHEL-191626)
+
+* Thu May 21 2026 Ján Václav <jvaclav@redhat.com> - 1:1.54.4-1
+- Update to 1.54.4
+- fix handling onlink route flag for ECMP routes (RHEL-157391)
+- Add Geneve support (RHEL-154245)
+- Fix lacp_active error on reapply (RHEL-157392)
+- Fix arp_missed_max error on 802.3ad bond reapply (RHEL-182630)
+- Removed 802.1x auth patch as it was released upstream
 
 * Thu May 7 2026 Rahul Rajesh <rrajesh@redhat.com> - 1:1.54.3-3
-- Fix 802.1x auth for bridge interface (RHEL-151941)
+- Fix 802.1x auth for bridge interface (RHEL-151942)
 
 * Wed Jan 7 2026 Beniamino Galvani <bgalvani@redhat.com> - 1:1.54.3-2
 - Add hard dependency on iputils (RHEL-134751)

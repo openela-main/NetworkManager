@@ -1,4 +1,4 @@
-From 32a370d177219b96f8059208e5dd1a0ba80d668d Mon Sep 17 00:00:00 2001
+From 753f3ae3d16889a933083b4f1c242eaddce17763 Mon Sep 17 00:00:00 2001
 From: Jan Vaclav <jvaclav@redhat.com>
 Date: Tue, 9 Jun 2026 11:28:15 +0200
 Subject: [PATCH] dhcp/dhclient: validate hostname before pasting it into
@@ -11,7 +11,6 @@ Add a check in create_dhclient_config() that rejects hostnames
 containing characters unsafe for dhclient.conf.
 
 (cherry picked from commit ca571c6819e01651be2197abff8eafff22ef80ef)
-(cherry picked from commit 753f3ae3d16889a933083b4f1c242eaddce17763)
 ---
  src/core/dhcp/nm-dhcp-dhclient.c | 16 ++++++++++++++++
  1 file changed, 16 insertions(+)

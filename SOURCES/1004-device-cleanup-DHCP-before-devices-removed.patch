@@ -1,0 +1,46 @@
+From 0dae9a3bb499e9c2334ed11dc04fe291e9114da1 Mon Sep 17 00:00:00 2001
+From: Rahul Rajesh <rajeshrah22@gmail.com>
+Date: Mon, 20 Apr 2026 16:23:20 -0400
+Subject: [PATCH 1004/1007] device: cleanup DHCP before devices removed
+
+Add _dev_ipdhcpx_cleanup in __set_state_full in DEACTIVATING STATE
+before STATE_CHANGED signal is emitted to ensure DHCP RELEASE
+packet is sent.
+
+Assisted-by: Cursor with Claude Opus 4.5
+(cherry picked from commit 09784fcce3ce4afb4b9d1f8c7352406156bcf6c2)
+(cherry picked from commit 755ad4a80276f6e0407e4d3f8025cf604398eb53)
+---
+ src/core/devices/nm-device.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/src/core/devices/nm-device.c b/src/core/devices/nm-device.c
+index a103652abc..0d7100a08e 100644
+--- a/src/core/devices/nm-device.c
++++ b/src/core/devices/nm-device.c
+@@ -17932,6 +17932,14 @@ _set_state_full(NMDevice *self, NMDeviceState state, NMDeviceStateReason reason,
+             nm_device_cleanup(self, reason, CLEANUP_TYPE_DECONFIGURE);
+         }
+         break;
++    case NM_DEVICE_STATE_DEACTIVATING:
++        /* When deactivating, certain devices are removed/disconnected after the
++         * STATE_CHANGED signal is sent and before the DHCP release packet
++         * can be sent. To ensure the release packet is sent, we cleanup DHCP
++         * before the signal is emitted*/
++        _dev_ipdhcpx_cleanup(self, AF_INET, TRUE, FALSE);
++        _dev_ipdhcpx_cleanup(self, AF_INET6, TRUE, FALSE);
++        break;
+     case NM_DEVICE_STATE_DISCONNECTED:
+         if (old_state > NM_DEVICE_STATE_DISCONNECTED) {
+             /* Ensure devices that previously assumed a connection now have
+@@ -17981,6 +17989,7 @@ _set_state_full(NMDevice *self, NMDeviceState state, NMDeviceStateReason reason,
+                                (guint32) state,
+                                (guint32) old_state,
+                                (guint32) reason);
++
+     g_signal_emit(self,
+                   signals[STATE_CHANGED],
+                   0,
+-- 
+2.54.0
+

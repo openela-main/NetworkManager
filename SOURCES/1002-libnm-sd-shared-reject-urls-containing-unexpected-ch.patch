@@ -1,4 +1,4 @@
-From 8d1fac7f656b1854fa10780fece7dbcadf50cc50 Mon Sep 17 00:00:00 2001
+From ee4421b7250a996911a0c361e5d1fbd4058fa852 Mon Sep 17 00:00:00 2001
 From: Jan Vaclav <jvaclav@redhat.com>
 Date: Mon, 8 Jun 2026 13:05:33 +0200
 Subject: [PATCH] libnm-sd-shared: reject urls containing unexpected characters
@@ -13,7 +13,6 @@ Reject control characters (< 0x20), double quotes, and backslashes in
 addition to non-ASCII bytes.
 
 (cherry picked from commit 5326760073c06157652b7e0d0865ada2eb0e393b)
-(cherry picked from commit ee4421b7250a996911a0c361e5d1fbd4058fa852)
 ---
  src/libnm-systemd-shared/nm-sd-utils-shared.c | 23 +++++++++++++++----
  1 file changed, 19 insertions(+), 4 deletions(-)
